@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { colors } from '../theme/colors';
 import { Ionicons } from '@expo/vector-icons';
-import { searchPosts, Post, getTagTypeMap } from '../api/sakugabooru';
+import { searchPosts, Post, getTagTypeMap, searchTags, Tag } from '../api/sakugabooru';
 import ArtistStatsView from './ArtistStatsView';
 import PostCard from '../components/PostCard';
 import EmptyState from '../components/EmptyState';
@@ -23,6 +23,33 @@ export default function SearchScreen({ navigation }: any) {
   const [mode, setMode] = useState<Mode>('results');
   const [tags, setTags] = useState<string[]>([]);
   const [pending, setPending] = useState('');
+  const [suggestions, setSuggestions] = useState<Tag[] | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!pending.trim()) {
+      setSuggestions(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      setSuggestionsLoading(true);
+      try {
+        const results = await searchTags(pending, undefined, 8); // any tag type — general/artist/show all suggested here
+        if (!cancelled) setSuggestions(results);
+      } catch {
+        // A failed suggestion lookup isn't worth an error banner — just show none.
+        if (!cancelled) setSuggestions(null);
+      } finally {
+        if (!cancelled) setSuggestionsLoading(false);
+      }
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [pending]);
+
   const [order, setOrder] = useState<Order>('score');
   const [results, setResults] = useState<Post[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -86,6 +113,12 @@ export default function SearchScreen({ navigation }: any) {
       setPending('');
     }
   }, [pending]);
+
+  const selectSuggestion = useCallback((tagName: string) => {
+    setTags((t) => [...t, tagName]);
+    setPending('');
+    setSuggestions(null);
+  }, []);
 
   const removeTag = (i: number) => setTags((t) => t.filter((_, idx) => idx !== i));
 
@@ -214,8 +247,21 @@ export default function SearchScreen({ navigation }: any) {
               onChangeText={setPending}
               onSubmitEditing={commitTag}
               returnKeyType="done"
+              autoCapitalize="none"
             />
+            {suggestionsLoading && <ActivityIndicator color={colors.amber} style={styles.inlineSpinner} />}
           </View>
+
+          {suggestions && suggestions.length > 0 && (
+            <View style={styles.suggestList}>
+              {suggestions.map((t) => (
+                <TouchableOpacity key={t.name} style={styles.suggestRow} onPress={() => selectSuggestion(t.name)}>
+                  <Text style={styles.suggestName}>{t.name}</Text>
+                  <Text style={styles.suggestCount}>{t.count}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
 
           <View style={styles.orderRow}>
             {(['score', 'date', 'random'] as Order[]).map((o) => (
@@ -332,7 +378,28 @@ const styles = StyleSheet.create({
   modeBtnActive: { borderColor: colors.amber, backgroundColor: colors.amberDim },
   modeBtnText: { color: colors.dim, fontSize: 12, fontWeight: 'bold' },
   modeBtnTextActive: { color: colors.amber },
-  row: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  inlineSpinner: { marginLeft: -4 },
+  suggestList: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 6,
+    marginTop: -4,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  suggestName: { color: colors.text, fontSize: 13 },
+  suggestCount: { color: colors.dim, fontSize: 11, fontFamily: 'monospace' },
   input: {
     flex: 1,
     backgroundColor: colors.panel,

@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
-import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, Comment } from '../api/sakugabooru';
+import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, verifyLogin, Comment } from '../api/sakugabooru';
+import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
+import { getStoredCredentials, saveCredentials, clearCredentials, hashPassword, StoredCredentials } from '../api/auth';
 import { Ionicons } from '@expo/vector-icons';
 
 // Same fps assumption as the bookmarklet: sakugabooru's post data doesn't
@@ -146,6 +148,67 @@ export default function ViewerScreen({ route, navigation }: any) {
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
+  // Auth is checked once per screen open — credentials live in the OS
+  // keychain (SecureStore) and persist across the whole app, not per-post.
+  const [credentials, setCredentials] = useState<StoredCredentials | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [newCommentBody, setNewCommentBody] = useState('');
+  const [postingComment, setPostingComment] = useState(false);
+  const [postCommentError, setPostCommentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getStoredCredentials().then(setCredentials);
+  }, []);
+
+  const doLogin = useCallback(async () => {
+    if (!loginUsername.trim() || !loginPassword) return;
+    setLoggingIn(true);
+    setLoginError(null);
+    try {
+      const hash = await hashPassword(loginPassword);
+      const ok = await verifyLogin(loginUsername.trim(), hash);
+      if (!ok) {
+        setLoginError('username or password is incorrect');
+        return;
+      }
+      const creds = await saveCredentials(loginUsername.trim(), loginPassword);
+      setCredentials(creds);
+      setLoginOpen(false);
+      setLoginPassword('');
+    } catch (e: any) {
+      setLoginError(e.message || 'login failed');
+    } finally {
+      setLoggingIn(false);
+    }
+  }, [loginUsername, loginPassword]);
+
+  const doLogout = useCallback(async () => {
+    await clearCredentials();
+    setCredentials(null);
+  }, []);
+
+  const doPostComment = useCallback(async () => {
+    if (!credentials || !newCommentBody.trim()) return;
+    setPostingComment(true);
+    setPostCommentError(null);
+    try {
+      await postComment(post.id, newCommentBody.trim(), credentials.username, credentials.passwordHash);
+      setNewCommentBody('');
+      // Refetch so the new comment actually shows up in the list, confirming
+      // it really posted rather than just trusting the request succeeded.
+      const fresh = await fetchComments(post.id);
+      setComments(fresh);
+    } catch (e: any) {
+      setPostCommentError(e.message || 'failed to post comment');
+    } finally {
+      setPostingComment(false);
+    }
+  }, [credentials, newCommentBody, post.id]);
+
   // Loaded eagerly (not on first expand) specifically so the count is known
   // and shown on the toggle before anyone taps it — this is a single small
   // request for one post's comments, not the kind of paginated crawl that
@@ -211,6 +274,83 @@ export default function ViewerScreen({ route, navigation }: any) {
     Linking.openURL(url).catch(() => setLinkError("couldn't open that link"));
   }, []);
 
+  const [markIn, setMarkIn] = useState<number | null>(null);
+  const [markOut, setMarkOut] = useState<number | null>(null);
+  const [accurateTrim, setAccurateTrim] = useState(false);
+  const [trimming, setTrimming] = useState(false);
+  const [trimStatus, setTrimStatus] = useState<string | null>(null);
+  const [trimError, setTrimError] = useState<string | null>(null);
+
+  const hasTrimRange = markIn !== null && markOut !== null && markOut > markIn;
+
+  const [readyFile, setReadyFile] = useState<{ uri: string; label: string } | null>(null);
+  const [shareOrSaveBusy, setShareOrSaveBusy] = useState(false);
+  const [shareOrSaveError, setShareOrSaveError] = useState<string | null>(null);
+
+  const doShare = useCallback(async () => {
+    if (!readyFile) return;
+    setShareOrSaveBusy(true);
+    setShareOrSaveError(null);
+    try {
+      await shareResult(readyFile.uri);
+    } catch (e: any) {
+      setShareOrSaveError(e.message || 'share failed');
+    } finally {
+      setShareOrSaveBusy(false);
+    }
+  }, [readyFile]);
+
+  const doSave = useCallback(async () => {
+    if (!readyFile) return;
+    setShareOrSaveBusy(true);
+    setShareOrSaveError(null);
+    try {
+      await saveToGallery(readyFile.uri);
+      setShareOrSaveError(null);
+      setTrimStatus(`saved to gallery`);
+    } catch (e: any) {
+      setShareOrSaveError(e.message || 'save failed');
+    } finally {
+      setShareOrSaveBusy(false);
+    }
+  }, [readyFile]);
+
+  const doTrim = useCallback(async () => {
+    if (!hasTrimRange || markIn === null || markOut === null) return;
+    setTrimming(true);
+    setTrimError(null);
+    setTrimStatus(null);
+    setReadyFile(null);
+    try {
+      const result = await performTrim(post.file_url, post.id, markIn, markOut, accurateTrim, setTrimStatus);
+      setTrimStatus(`done in ${result.seconds.toFixed(1)}s`);
+      setReadyFile({ uri: result.uri, label: 'trimmed clip' });
+    } catch (e: any) {
+      setTrimError(e.message || 'trim failed');
+      setTrimStatus(null);
+    } finally {
+      setTrimming(false);
+    }
+  }, [hasTrimRange, markIn, markOut, accurateTrim, post.file_url, post.id]);
+
+  const [downloadingFull, setDownloadingFull] = useState(false);
+  const doDownloadFull = useCallback(async () => {
+    setDownloadingFull(true);
+    setTrimError(null);
+    setTrimStatus(null);
+    setReadyFile(null);
+    try {
+      const result = await downloadFull(post.file_url, post.id, duration, setTrimStatus);
+      setTrimStatus('ready');
+      setReadyFile({ uri: result.uri, label: 'full clip' });
+    } catch (e: any) {
+      setTrimError(e.message || 'download failed');
+      setTrimStatus(null);
+    } finally {
+      setDownloadingFull(false);
+    }
+  }, [post.file_url, post.id, duration]);
+
   const [otherTags, setOtherTags] = useState<string[]>((post.tags || '').split(/\s+/).filter(Boolean));
 
   useEffect(() => {
@@ -233,7 +373,12 @@ export default function ViewerScreen({ route, navigation }: any) {
   }, []);
 
   return (
-    <ScrollView style={styles.container} ref={scrollRef}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
+    >
+      <ScrollView style={styles.container} ref={scrollRef}>
       <View style={styles.headRow}>
         <Text style={styles.badge}>▲ {post.score}</Text>
         <Text style={styles.badge}>{post.rating}</Text>
@@ -271,6 +416,84 @@ export default function ViewerScreen({ route, navigation }: any) {
             <Text style={styles.frameTime}>
               {formatTime(currentTime)} / {formatTime(duration)}
             </Text>
+          </View>
+
+          <View style={styles.trimSection}>
+            <View style={styles.trimRow}>
+              <TouchableOpacity style={styles.frameBtn} onPress={() => setMarkIn(currentTime)}>
+                <Text style={styles.frameBtnText}>Mark In</Text>
+              </TouchableOpacity>
+              <Text style={styles.trimLabel}>in: {markIn !== null ? formatTime(markIn) : '—'}</Text>
+              <TouchableOpacity style={styles.frameBtn} onPress={() => setMarkOut(currentTime)}>
+                <Text style={styles.frameBtnText}>Mark Out</Text>
+              </TouchableOpacity>
+              <Text style={styles.trimLabel}>out: {markOut !== null ? formatTime(markOut) : '—'}</Text>
+              {(markIn !== null || markOut !== null) && (
+                <TouchableOpacity
+                  style={styles.frameBtn}
+                  onPress={() => {
+                    setMarkIn(null);
+                    setMarkOut(null);
+                  }}
+                >
+                  <Ionicons name="close" size={14} color={colors.text} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity style={styles.accurateRow} onPress={() => setAccurateTrim((a) => !a)}>
+              <Ionicons
+                name={accurateTrim ? 'checkbox' : 'square-outline'}
+                size={16}
+                color={accurateTrim ? colors.amber : colors.dim}
+              />
+              <Text style={styles.accurateText}>
+                {' '}
+                frame-accurate (slower, more exact)
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.trimBtnRow}>
+              <TouchableOpacity
+                style={[styles.trimBtn, styles.trimBtnHalf]}
+                disabled={downloadingFull}
+                onPress={doDownloadFull}
+              >
+                {downloadingFull ? (
+                  <ActivityIndicator color={colors.amber} size="small" />
+                ) : (
+                  <Text style={styles.trimBtnText}>⬇ Download Full</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.trimBtn, styles.trimBtnHalf, !hasTrimRange && styles.trimBtnDisabled]}
+                disabled={!hasTrimRange || trimming}
+                onPress={doTrim}
+              >
+                {trimming ? (
+                  <ActivityIndicator color={colors.amber} size="small" />
+                ) : (
+                  <Text style={styles.trimBtnText}>⬇ Download Trim</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+            {trimStatus && <Text style={styles.trimStatus}>{trimStatus}</Text>}
+            {trimError && <Text style={styles.error}>{trimError}</Text>}
+
+            {readyFile && (
+              <View style={styles.readyRow}>
+                <Text style={styles.readyLabel}>{readyFile.label} ready —</Text>
+                <TouchableOpacity style={styles.readyBtn} disabled={shareOrSaveBusy} onPress={doShare}>
+                  <Ionicons name="share-outline" size={13} color={colors.amber} />
+                  <Text style={styles.readyBtnText}> Share</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.readyBtn} disabled={shareOrSaveBusy} onPress={doSave}>
+                  <Ionicons name="download-outline" size={13} color={colors.amber} />
+                  <Text style={styles.readyBtnText}> Save to Gallery</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {shareOrSaveError && <Text style={styles.error}>{shareOrSaveError}</Text>}
           </View>
         </>
       ) : (
@@ -314,6 +537,72 @@ export default function ViewerScreen({ route, navigation }: any) {
 
       {commentsOpen && (
         <View style={styles.commentsPanel}>
+          {credentials ? (
+            <View style={styles.composerBox}>
+              <View style={styles.loggedInRow}>
+                <Text style={styles.loggedInText}>logged in as {credentials.username}</Text>
+                <TouchableOpacity onPress={doLogout}>
+                  <Text style={styles.logoutLink}>log out</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={styles.composerInput}
+                placeholder="write a comment…"
+                placeholderTextColor={colors.dim}
+                value={newCommentBody}
+                onChangeText={setNewCommentBody}
+                multiline
+              />
+              <TouchableOpacity
+                style={[styles.postCommentBtn, !newCommentBody.trim() && styles.trimBtnDisabled]}
+                disabled={!newCommentBody.trim() || postingComment}
+                onPress={doPostComment}
+              >
+                {postingComment ? (
+                  <ActivityIndicator color={colors.amber} size="small" />
+                ) : (
+                  <Text style={styles.postCommentBtnText}>Post Comment</Text>
+                )}
+              </TouchableOpacity>
+              {postCommentError && <Text style={styles.error}>{postCommentError}</Text>}
+            </View>
+          ) : loginOpen ? (
+            <View style={styles.composerBox}>
+              <TextInput
+                style={styles.composerInputSingle}
+                placeholder="username"
+                placeholderTextColor={colors.dim}
+                value={loginUsername}
+                onChangeText={setLoginUsername}
+                autoCapitalize="none"
+              />
+              <TextInput
+                style={styles.composerInputSingle}
+                placeholder="password"
+                placeholderTextColor={colors.dim}
+                value={loginPassword}
+                onChangeText={setLoginPassword}
+                secureTextEntry
+              />
+              <TouchableOpacity
+                style={[styles.postCommentBtn, (!loginUsername.trim() || !loginPassword) && styles.trimBtnDisabled]}
+                disabled={!loginUsername.trim() || !loginPassword || loggingIn}
+                onPress={doLogin}
+              >
+                {loggingIn ? (
+                  <ActivityIndicator color={colors.amber} size="small" />
+                ) : (
+                  <Text style={styles.postCommentBtnText}>Log In</Text>
+                )}
+              </TouchableOpacity>
+              {loginError && <Text style={styles.error}>{loginError}</Text>}
+            </View>
+          ) : (
+            <TouchableOpacity onPress={() => setLoginOpen(true)}>
+              <Text style={styles.loginLink}>Log in to comment</Text>
+            </TouchableOpacity>
+          )}
+
           {commentsLoading && <ActivityIndicator color={colors.amber} style={{ marginVertical: 10 }} />}
           {commentsError && <Text style={styles.error}>error: {commentsError}</Text>}
           {linkError && <Text style={styles.error}>{linkError}</Text>}
@@ -355,6 +644,7 @@ export default function ViewerScreen({ route, navigation }: any) {
         </View>
       )}
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -406,6 +696,36 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 6,
   },
+  trimSection: { padding: 10, backgroundColor: colors.panel2, borderTopWidth: 1, borderTopColor: colors.line },
+  trimRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  trimLabel: { color: colors.dim, fontSize: 11, fontFamily: 'monospace' },
+  accurateRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  accurateText: { color: colors.dim, fontSize: 11, flex: 1, lineHeight: 15 },
+  trimBtnRow: { flexDirection: 'row', gap: 8 },
+  trimBtn: {
+    backgroundColor: colors.amberDim,
+    borderWidth: 1,
+    borderColor: colors.amber,
+    borderRadius: 6,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  trimBtnHalf: { flex: 1 },
+  trimBtnDisabled: { opacity: 0.4 },
+  trimBtnText: { color: colors.amber, fontWeight: 'bold', fontSize: 13 },
+  trimStatus: { color: colors.dim, fontSize: 11, textAlign: 'center', marginTop: 6 },
+  readyRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 8, justifyContent: 'center' },
+  readyLabel: { color: colors.dim, fontSize: 11 },
+  readyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.amber,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  readyBtnText: { color: colors.amber, fontSize: 11, fontWeight: '600' },
   tagsSection: { padding: 16 },
   tagsLabel: { color: colors.text, fontSize: 12, fontWeight: 'bold', marginBottom: 8, marginTop: 6 },
   tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
@@ -445,6 +765,49 @@ const styles = StyleSheet.create({
   commentName: { color: colors.amber, fontSize: 12, fontWeight: 'bold' },
   commentDate: { color: colors.dim, fontSize: 11 },
   commentBody: { color: colors.text, fontSize: 13, lineHeight: 19 },
+  loginLink: { color: colors.amber, fontSize: 12, fontWeight: '600', marginBottom: 12 },
+  composerBox: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 14,
+  },
+  loggedInRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  loggedInText: { color: colors.dim, fontSize: 11 },
+  logoutLink: { color: colors.red, fontSize: 11 },
+  composerInput: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 6,
+    color: colors.text,
+    padding: 8,
+    fontSize: 13,
+    minHeight: 60,
+    textAlignVertical: 'top',
+    marginBottom: 8,
+  },
+  composerInputSingle: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 6,
+    color: colors.text,
+    padding: 8,
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  postCommentBtn: {
+    backgroundColor: colors.amberDim,
+    borderWidth: 1,
+    borderColor: colors.amber,
+    borderRadius: 6,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  postCommentBtnText: { color: colors.amber, fontWeight: 'bold', fontSize: 12 },
   timestampLink: { color: colors.amber, fontWeight: 'bold', textDecorationLine: 'underline' },
   link: { color: colors.link, textDecorationLine: 'underline' },
   quoteBlock: {

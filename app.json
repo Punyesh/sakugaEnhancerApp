@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Sakuga",
+    "name": "Sakuga Enhancer",
     "slug": "sakuga-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,11 +16,22 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.punyesh.sakugaapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24
+          }
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "7852f097-ffaa-4d56-8f27-90be38580f97"

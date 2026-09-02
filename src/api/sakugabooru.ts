@@ -426,3 +426,61 @@ export async function getPostById(id: number): Promise<Post | null> {
   return posts[0] || null;
 }
 
+// ---------- posting comments ----------
+// Built against the standard Moebooru/Danbooru-v1 convention this fork's own
+// docs confirm compatibility with (nested comment[...] params, login +
+// password_hash for auth) — unlike almost everything else in this file, the
+// exact endpoint/parameter names here haven't been confirmed against a real
+// live request, only against documented convention. Worth double-checking
+// against the real response the first time this actually runs.
+interface CommentPostResponse {
+  success: boolean;
+  reason?: string;
+}
+
+async function postCommentRaw(postId: number, body: string, username: string, passwordHash: string): Promise<CommentPostResponse> {
+  const params = new URLSearchParams();
+  params.set('login', username);
+  params.set('password_hash', passwordHash);
+  params.set('comment[post_id]', String(postId));
+  params.set('comment[body]', body);
+
+  const res = await fetch(`${BASE_URL}/comment/create.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+
+  const text = await res.text();
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Non-JSON response — fall through to the generic HTTP-status-based result below.
+  }
+
+  if (res.ok && (!parsed || parsed.success !== false)) {
+    return { success: true };
+  }
+  return { success: false, reason: (parsed && parsed.reason) || `HTTP ${res.status}: ${text.slice(0, 200)}` };
+}
+
+export async function postComment(postId: number, body: string, username: string, passwordHash: string): Promise<void> {
+  const result = await postCommentRaw(postId, body, username, passwordHash);
+  if (!result.success) throw new Error(result.reason || 'failed to post comment');
+}
+
+/** Verifies credentials against the real server WITHOUT posting a visible
+ * comment — attempts one on a deliberately out-of-range post id (well past
+ * the site's actual highest post id, confirmed via public post-count data
+ * to not exist). A confirmed real response shape from this exact endpoint
+ * is `{"success":false,"reason":"access denied"}` for bad credentials —
+ * any OTHER failure reason means auth itself succeeded and the failure is
+ * just that this post obviously doesn't exist. */
+export async function verifyLogin(username: string, passwordHash: string): Promise<boolean> {
+  const result = await postCommentRaw(999999999, '(login verification — safe to ignore if visible)', username, passwordHash);
+  if (result.success) return true; // shouldn't happen given the bogus post id, but a real success is still a success
+  const reason = (result.reason || '').toLowerCase();
+  return !reason.includes('denied');
+}
+

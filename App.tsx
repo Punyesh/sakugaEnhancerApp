@@ -38,11 +38,18 @@ const screenOptions = {
 
 // A small branding moment on the app's main entry point, matching the
 // bookmarklet's distinctive amber-accent identity instead of a plain title.
+// Matches the bookmarklet's own established header identity — "SAKUGA" dim,
+// "ENHANCER" in the amber accent — plus a small, deliberately-visible credit
+// to sakugabooru itself, since this whole app is built entirely on their API
+// and community, and that shouldn't be hidden.
 function BrandTitle() {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-      <Text style={{ color: colors.dim, fontSize: 18, fontWeight: '600', letterSpacing: 1 }}>SAKU</Text>
-      <Text style={{ color: colors.amber, fontSize: 18, fontWeight: 'bold', letterSpacing: 1 }}>GA</Text>
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+        <Text style={{ color: colors.dim, fontSize: 17, fontWeight: '600', letterSpacing: 0.5 }}>SAKUGA </Text>
+        <Text style={{ color: colors.amber, fontSize: 17, fontWeight: 'bold', letterSpacing: 0.5 }}>ENHANCER</Text>
+      </View>
+      <Text style={{ color: colors.dim, fontSize: 9, opacity: 0.7 }}>powered by sakugabooru.com</Text>
     </View>
   );
 }
