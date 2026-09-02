@@ -1,0 +1,127 @@
+import React, { useEffect } from 'react';
+import { View, Text } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import { colors } from './src/theme/colors';
+import { ensureAllTags } from './src/api/sakugabooru';
+import SearchScreen from './src/screens/SearchScreen';
+import ShowSearchScreen from './src/screens/ShowSearchScreen';
+import ShowDetailScreen from './src/screens/ShowDetailScreen';
+import EpisodeResultsScreen from './src/screens/EpisodeResultsScreen';
+import ViewerScreen from './src/screens/ViewerScreen';
+
+const RootStack = createNativeStackNavigator();
+const Tabs = createBottomTabNavigator();
+const SearchStackNav = createNativeStackNavigator();
+const ShowsStackNav = createNativeStackNavigator();
+
+const theme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: colors.bg,
+    card: colors.panel2,
+    text: colors.text,
+    border: colors.line,
+    primary: colors.amber,
+  },
+};
+
+const screenOptions = {
+  headerStyle: { backgroundColor: colors.panel2 },
+  headerTintColor: colors.amber,
+  headerTitleStyle: { color: colors.text },
+};
+
+// A small branding moment on the app's main entry point, matching the
+// bookmarklet's distinctive amber-accent identity instead of a plain title.
+function BrandTitle() {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+      <Text style={{ color: colors.dim, fontSize: 18, fontWeight: '600', letterSpacing: 1 }}>SAKU</Text>
+      <Text style={{ color: colors.amber, fontSize: 18, fontWeight: 'bold', letterSpacing: 1 }}>GA</Text>
+    </View>
+  );
+}
+
+function SearchStack() {
+  return (
+    <SearchStackNav.Navigator screenOptions={screenOptions}>
+      <SearchStackNav.Screen name="Search" component={SearchScreen} options={{ headerTitle: () => <BrandTitle /> }} />
+    </SearchStackNav.Navigator>
+  );
+}
+
+// Shows gets its own nested stack so drilling into a show, an episode, and
+// related titles all get real native back-navigation (hardware back button /
+// swipe-back gesture) for free — this replaces the bookmarklet's manual
+// Back/Forward button pair, which was a web-specific workaround for not
+// having a real navigation stack to begin with.
+function ShowsStack() {
+  return (
+    <ShowsStackNav.Navigator screenOptions={screenOptions}>
+      <ShowsStackNav.Screen name="ShowSearch" component={ShowSearchScreen} options={{ title: 'Shows' }} />
+      <ShowsStackNav.Screen name="ShowDetail" component={ShowDetailScreen} />
+      <ShowsStackNav.Screen name="EpisodeResults" component={EpisodeResultsScreen} />
+    </ShowsStackNav.Navigator>
+  );
+}
+
+function MainTabs() {
+  return (
+    <Tabs.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: { backgroundColor: colors.panel2, borderTopColor: colors.line },
+        tabBarActiveTintColor: colors.amber,
+        tabBarInactiveTintColor: colors.dim,
+      }}
+    >
+      <Tabs.Screen
+        name="SearchTab"
+        component={SearchStack}
+        options={{
+          title: 'Search',
+          tabBarIcon: ({ color, size }) => <Ionicons name="search" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="ShowsTab"
+        component={ShowsStack}
+        options={{
+          title: 'Shows',
+          tabBarIcon: ({ color, size }) => <Ionicons name="tv-outline" size={size} color={color} />,
+        }}
+      />
+    </Tabs.Navigator>
+  );
+}
+
+export default function App() {
+  // Speculatively start warming the tag dictionary the moment the app opens
+  // (checking the persistent cache first, only hitting the network if it's
+  // genuinely stale) — by the time someone actually finishes typing their
+  // first search, this is often already done or well underway, instead of
+  // only starting at the moment of that first search.
+  useEffect(() => {
+    ensureAllTags().catch(() => {
+      // A failed prefetch isn't worth surfacing — whatever actually needs
+      // the dictionary later will just try again and can show its own error.
+    });
+  }, []);
+
+  return (
+    <NavigationContainer theme={theme}>
+      <StatusBar style="light" />
+      <RootStack.Navigator screenOptions={screenOptions}>
+        <RootStack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+        {/* Viewer sits at the root, shared by both tabs — either tab's
+            navigation.navigate('Viewer', ...) bubbles up to find it here. */}
+        <RootStack.Screen name="Viewer" component={ViewerScreen} options={{ title: 'Clip' }} />
+      </RootStack.Navigator>
+    </NavigationContainer>
+  );
+}
