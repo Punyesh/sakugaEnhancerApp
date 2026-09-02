@@ -11,7 +11,6 @@
     "expo": "^57.0.19",
     "expo-build-properties": "^57.0.16",
     "expo-crypto": "^57.0.2",
-    "expo-dev-client": "~57.0.18",
     "expo-file-system": "^57.0.6",
     "expo-secure-store": "^57.0.3",
     "expo-status-bar": "~57.0.1",

@@ -8,6 +8,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Pressable,
+  Keyboard,
 } from 'react-native';
 import { colors } from '../theme/colors';
 import { Ionicons } from '@expo/vector-icons';
@@ -104,6 +105,33 @@ export default function SearchScreen({ navigation }: any) {
     });
   }, [results, excludedTags]);
 
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  // Stable references shared by every card, rather than a fresh inline
+  // closure per card per render — required for PostCard's memo() to
+  // actually skip re-rendering unrelated cards when selection changes.
+  const handleSelectCard = useCallback((id: number) => setSelectedId(id), []);
+  const handleOpenCard = useCallback(
+    (post: Post) => {
+      setSelectedId(null);
+      navigation.navigate('Viewer', { post });
+    },
+    [navigation]
+  );
+
+  // A selected clip's info strip shouldn't survive navigating away entirely
+  // (e.g. switching to the Shows tab) — this tab stays mounted in the
+  // background rather than unmounting, so a plain unmount cleanup wouldn't
+  // catch that; the navigation blur event does.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('blur', () => setSelectedId(null));
+    return unsubscribe;
+  }, [navigation]);
+  // Synchronous, no fetch at all — post.tags is already in memory from the
+  // search results themselves. No need to classify tag types for this, just
+  // the plain raw tag string, matching the bookmarklet's own minimal design.
+  const selectedPost = selectedId !== null ? visibleResults?.find((p) => p.id === selectedId) || null : null;
+
   const activeExclusionCount = Object.values(excludedTags).filter(Boolean).length;
 
   const commitTag = useCallback(() => {
@@ -114,17 +142,13 @@ export default function SearchScreen({ navigation }: any) {
     }
   }, [pending]);
 
-  const selectSuggestion = useCallback((tagName: string) => {
-    setTags((t) => [...t, tagName]);
-    setPending('');
-    setSuggestions(null);
-  }, []);
-
   const removeTag = (i: number) => setTags((t) => t.filter((_, idx) => idx !== i));
 
   const performSearch = useCallback(
     async (tagsToUse: string[], syncToStats = true) => {
+      Keyboard.dismiss(); // otherwise the first tap on a fresh result just closes the keyboard
       setLoading(true);
+      setSelectedId(null); // clear immediately, not just once new results arrive
       setError(null);
       setPage(1);
       setHasMore(true);
@@ -159,6 +183,24 @@ export default function SearchScreen({ navigation }: any) {
     [order]
   );
 
+  // Selecting a suggestion runs the search immediately with the updated tag
+  // list — typing then picking a suggestion is how someone finishes
+  // specifying what they're looking for, so there's no reason to also
+  // require a separate Search tap afterward. (Manually typing a full tag and
+  // pressing Enter via commitTag still just adds a chip without searching,
+  // since that path is more often used to string several tags together
+  // before searching once.)
+  const selectSuggestion = useCallback(
+    (tagName: string) => {
+      const finalTags = [...tags, tagName];
+      setTags(finalTags);
+      setPending('');
+      setSuggestions(null);
+      performSearch(finalTags);
+    },
+    [tags, performSearch]
+  );
+
   const loadingMoreRef = useRef(false); // synchronous guard — React state alone
   // isn't enough here, since onEndReached can fire multiple times before a
   // state update from the previous call has actually propagated, causing the
@@ -190,6 +232,15 @@ export default function SearchScreen({ navigation }: any) {
       loadingMoreRef.current = false;
     }
   }, [hasMore, activeQuery, page]);
+
+  // Changing sort order while a search is already active re-runs it
+  // automatically with the same tags — no reason to make the user press
+  // Search again just to re-sort results they already have.
+  useEffect(() => {
+    if (activeQuery) {
+      performSearch(activeQuery.tags, false); // already synced to Stats; also clears selection internally now
+    }
+  }, [order]);
 
   const runSearch = useCallback(() => {
     const finalTags = pending.trim() ? [...tags, pending.trim().toLowerCase().replace(/\s+/g, '_')] : tags;
@@ -225,7 +276,10 @@ export default function SearchScreen({ navigation }: any) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.modeBtn, mode === 'stats' && styles.modeBtnActive]}
-          onPress={() => setMode('stats')}
+          onPress={() => {
+            setMode('stats');
+            setSelectedId(null);
+          }}
         >
           <Ionicons name="bar-chart-outline" size={14} color={mode === 'stats' ? colors.amber : colors.dim} />
           <Text style={[styles.modeBtnText, mode === 'stats' && styles.modeBtnTextActive]}>
@@ -329,6 +383,23 @@ export default function SearchScreen({ navigation }: any) {
             </View>
           )}
 
+          {selectedPost && (
+            <View style={styles.selectedStrip}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.selectedStripText} numberOfLines={2}>
+                  {selectedPost.tags}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedId(null)}
+                style={styles.selectedStripClose}
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+              >
+                <Ionicons name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {visibleResults && !loading && (
             <FlatList
               style={{ marginTop: 12 }}
@@ -339,6 +410,16 @@ export default function SearchScreen({ navigation }: any) {
               contentContainerStyle={{ gap: 6 }}
               onEndReached={loadMore}
               onEndReachedThreshold={0.5}
+              // Right when 24 fresh results land, all their thumbnails try to
+              // decode at once, which can make the UI thread busy enough that
+              // the very next tap feels like it doesn't register. Rendering
+              // fewer items up front (just enough to fill the screen) and
+              // batching the rest spreads that decode cost out instead of
+              // dumping it all in a single frame.
+              initialNumToRender={12}
+              maxToRenderPerBatch={9}
+              windowSize={5}
+              updateCellsBatchingPeriod={50}
               ListEmptyComponent={
                 <Text style={styles.empty}>
                   {activeExclusionCount > 0 ? 'no posts left after excluding those tags' : 'no posts matched those tags'}
@@ -352,7 +433,12 @@ export default function SearchScreen({ navigation }: any) {
                 ) : null
               }
               renderItem={({ item }) => (
-                <PostCard post={item} onPress={() => navigation.navigate('Viewer', { post: item })} />
+                <PostCard
+                  post={item}
+                  selected={selectedId === item.id}
+                  onSelect={handleSelectCard}
+                  onOpen={handleOpenCard}
+                />
               )}
             />
           )}
@@ -400,6 +486,25 @@ const styles = StyleSheet.create({
   },
   suggestName: { color: colors.text, fontSize: 13 },
   suggestCount: { color: colors.dim, fontSize: 11, fontFamily: 'monospace' },
+  selectedStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.panel,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+    gap: 8,
+  },
+  selectedStripText: { color: colors.dim, fontSize: 11, lineHeight: 15 },
+  selectedStripClose: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.panel2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   input: {
     flex: 1,
     backgroundColor: colors.panel,

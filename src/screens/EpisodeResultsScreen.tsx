@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { colors } from '../theme/colors';
 import { searchPosts, Post } from '../api/sakugabooru';
 import PostCard from '../components/PostCard';
+import { Ionicons } from '@expo/vector-icons';
 
 const PAGE_SIZE = 24;
 
@@ -16,6 +17,25 @@ export default function EpisodeResultsScreen({ route, navigation }: any) {
   };
 
   const [posts, setPosts] = useState<Post[] | null>(mode === 'sampled' ? sampledPosts || [] : null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  const handleSelectCard = useCallback((id: number) => setSelectedId(id), []);
+  const handleOpenCard = useCallback(
+    (post: Post) => {
+      setSelectedId(null);
+      navigation.navigate('Viewer', { post });
+    },
+    [navigation]
+  );
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('blur', () => setSelectedId(null));
+    return unsubscribe;
+  }, [navigation]);
+  // Synchronous, no fetch — just the post's plain tag string already in
+  // memory, matching the bookmarklet's own minimal design.
+  const selectedPost = selectedId !== null ? posts?.find((p) => p.id === selectedId) || null : null;
+
   const [loading, setLoading] = useState(mode === 'search');
   const [error, setError] = useState<string | null>(null);
   const [attempting, setAttempting] = useState<string | null>(null);
@@ -110,6 +130,23 @@ export default function EpisodeResultsScreen({ route, navigation }: any) {
       )}
       {error && <Text style={styles.error}>error: {error}</Text>}
 
+      {selectedPost && (
+        <View style={styles.selectedStrip}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.selectedStripText} numberOfLines={2}>
+              {selectedPost.tags}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => setSelectedId(null)}
+            style={styles.selectedStripClose}
+            hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+          >
+            <Ionicons name="close" size={18} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {posts && !loading && (
         <FlatList
           data={posts}
@@ -119,6 +156,10 @@ export default function EpisodeResultsScreen({ route, navigation }: any) {
           contentContainerStyle={{ gap: 6, padding: 12 }}
           onEndReached={mode === 'search' ? loadMore : undefined}
           onEndReachedThreshold={0.5}
+          initialNumToRender={12}
+          maxToRenderPerBatch={9}
+          windowSize={5}
+          updateCellsBatchingPeriod={50}
           ListEmptyComponent={
             <Text style={styles.empty}>
               {mode === 'search'
@@ -136,7 +177,7 @@ export default function EpisodeResultsScreen({ route, navigation }: any) {
             ) : null
           }
           renderItem={({ item }) => (
-            <PostCard post={item} onPress={() => navigation.navigate('Viewer', { post: item })} />
+            <PostCard post={item} selected={selectedId === item.id} onSelect={handleSelectCard} onOpen={handleOpenCard} />
           )}
         />
       )}
@@ -145,6 +186,26 @@ export default function EpisodeResultsScreen({ route, navigation }: any) {
 }
 
 const styles = StyleSheet.create({
+  selectedStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.panel,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginHorizontal: 12,
+    marginTop: 8,
+    gap: 8,
+  },
+  selectedStripText: { color: colors.dim, fontSize: 11, lineHeight: 15 },
+  selectedStripClose: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.panel2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   container: { flex: 1, backgroundColor: colors.bg },
   loadingWrap: { marginTop: 40, alignItems: 'center' },
   loadingNote: { color: colors.dim, fontSize: 11, marginTop: 8 },

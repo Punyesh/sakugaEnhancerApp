@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
 import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, verifyLogin, Comment } from '../api/sakugabooru';
@@ -373,6 +373,7 @@ export default function ViewerScreen({ route, navigation }: any) {
   }, []);
 
   return (
+    <>
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -566,37 +567,6 @@ export default function ViewerScreen({ route, navigation }: any) {
               </TouchableOpacity>
               {postCommentError && <Text style={styles.error}>{postCommentError}</Text>}
             </View>
-          ) : loginOpen ? (
-            <View style={styles.composerBox}>
-              <TextInput
-                style={styles.composerInputSingle}
-                placeholder="username"
-                placeholderTextColor={colors.dim}
-                value={loginUsername}
-                onChangeText={setLoginUsername}
-                autoCapitalize="none"
-              />
-              <TextInput
-                style={styles.composerInputSingle}
-                placeholder="password"
-                placeholderTextColor={colors.dim}
-                value={loginPassword}
-                onChangeText={setLoginPassword}
-                secureTextEntry
-              />
-              <TouchableOpacity
-                style={[styles.postCommentBtn, (!loginUsername.trim() || !loginPassword) && styles.trimBtnDisabled]}
-                disabled={!loginUsername.trim() || !loginPassword || loggingIn}
-                onPress={doLogin}
-              >
-                {loggingIn ? (
-                  <ActivityIndicator color={colors.amber} size="small" />
-                ) : (
-                  <Text style={styles.postCommentBtnText}>Log In</Text>
-                )}
-              </TouchableOpacity>
-              {loginError && <Text style={styles.error}>{loginError}</Text>}
-            </View>
           ) : (
             <TouchableOpacity onPress={() => setLoginOpen(true)}>
               <Text style={styles.loginLink}>Log in to comment</Text>
@@ -645,6 +615,58 @@ export default function ViewerScreen({ route, navigation }: any) {
       )}
     </ScrollView>
     </KeyboardAvoidingView>
+
+    <Modal visible={loginOpen} transparent animationType="fade" onRequestClose={() => setLoginOpen(false)}>
+      <KeyboardAvoidingView
+        style={styles.modalBackdrop}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Log In</Text>
+          <TextInput
+            style={styles.composerInputSingle}
+            placeholder="username"
+            placeholderTextColor={colors.dim}
+            value={loginUsername}
+            onChangeText={setLoginUsername}
+            autoCapitalize="none"
+            autoFocus
+          />
+          <TextInput
+            style={styles.composerInputSingle}
+            placeholder="password"
+            placeholderTextColor={colors.dim}
+            value={loginPassword}
+            onChangeText={setLoginPassword}
+            secureTextEntry
+          />
+          <TouchableOpacity
+            style={[styles.postCommentBtn, (!loginUsername.trim() || !loginPassword) && styles.trimBtnDisabled]}
+            disabled={!loginUsername.trim() || !loginPassword || loggingIn}
+            onPress={doLogin}
+          >
+            {loggingIn ? (
+              <ActivityIndicator color={colors.amber} size="small" />
+            ) : (
+              <Text style={styles.postCommentBtnText}>Log In</Text>
+            )}
+          </TouchableOpacity>
+          {loginError && <Text style={styles.error}>{loginError}</Text>}
+          <TouchableOpacity
+            style={styles.modalCancel}
+            onPress={() => {
+              setLoginOpen(false);
+              setLoginError(null);
+              setLoginUsername('');
+              setLoginPassword('');
+            }}
+          >
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    </>
   );
 }
 
@@ -766,6 +788,25 @@ const styles = StyleSheet.create({
   commentDate: { color: colors.dim, fontSize: 11 },
   commentBody: { color: colors.text, fontSize: 13, lineHeight: 19 },
   loginLink: { color: colors.amber, fontSize: 12, fontWeight: '600', marginBottom: 12 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 10,
+    padding: 18,
+  },
+  modalTitle: { color: colors.text, fontSize: 16, fontWeight: 'bold', marginBottom: 14 },
+  modalCancel: { alignItems: 'center', marginTop: 10 },
+  modalCancelText: { color: colors.dim, fontSize: 12 },
   composerBox: {
     backgroundColor: colors.panel,
     borderWidth: 1,
