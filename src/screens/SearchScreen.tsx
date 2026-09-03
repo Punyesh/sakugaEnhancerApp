@@ -310,7 +310,19 @@ export default function SearchScreen({ navigation }: any) {
             <View style={styles.suggestList}>
               {suggestions.map((t) => (
                 <TouchableOpacity key={t.name} style={styles.suggestRow} onPress={() => selectSuggestion(t.name)}>
-                  <Text style={styles.suggestName}>{t.name}</Text>
+                  <View style={styles.suggestNameRow}>
+                    <Text
+                      style={[
+                        styles.suggestName,
+                        t.type === 1 && styles.suggestNameArtist,
+                        t.type === 3 && styles.suggestNameShow,
+                      ]}
+                    >
+                      {t.name}
+                    </Text>
+                    {t.type === 1 && <Text style={styles.suggestType}>artist</Text>}
+                    {t.type === 3 && <Text style={styles.suggestType}>series</Text>}
+                  </View>
                   <Text style={styles.suggestCount}>{t.count}</Text>
                 </TouchableOpacity>
               ))}
@@ -484,7 +496,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.line,
   },
+  suggestNameRow: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 6 },
   suggestName: { color: colors.text, fontSize: 13 },
+  suggestNameArtist: { color: colors.amber, fontWeight: '600' },
+  suggestNameShow: { color: colors.link },
+  suggestType: { color: colors.dim, fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5 },
   suggestCount: { color: colors.dim, fontSize: 11, fontFamily: 'monospace' },
   selectedStrip: {
     flexDirection: 'row',
