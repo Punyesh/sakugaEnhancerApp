@@ -16,7 +16,8 @@ Built with React Native + Expo, powered entirely by sakugabooru's own public API
 
 ## Get the app
 
-**Quick download:** [Download APK](https://expo.dev/accounts/punyesh/projects/sakuga-app/builds/613f1f29-a0c6-42ab-9dc6-3abfe82b5243) — note this link may expire around 30 days after the build was created (Expo's own retention limit for this build type). If it's dead, use the steps below instead.
+**Quick download:** [Download APK](https://expo.dev/accounts/punyesh/projects/sakuga-app/builds/7d8e0195-ada6-4643-bb17-c10f7bf04535
+) — note this link may expire around 30 days after the build was created (Expo's own retention limit for this build type). If it's dead, use the steps below instead.
 
 No pre-built APK is guaranteed to stay current — build your own, free, in about 15 minutes:
 
