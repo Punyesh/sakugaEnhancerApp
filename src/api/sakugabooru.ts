@@ -465,6 +465,37 @@ async function postCommentRaw(postId: number, body: string, username: string, pa
   return { success: false, reason: (parsed && parsed.reason) || `HTTP ${res.status}: ${text.slice(0, 200)}` };
 }
 
+// Upvote-only, scoped conservatively — confirmed the endpoint exists directly
+// from sakugabooru's own /help/api page ("The base URL is /post/vote.xml"),
+// but unlike comment-posting, the exact parameter format here isn't backed
+// by the same level of documentation — built against the general
+// Danbooru-family convention (post_vote(post_id, score)) as the
+// best-reasoned guess, genuinely worth confirming with a real test.
+export async function voteUp(postId: number, username: string, passwordHash: string): Promise<void> {
+  const params = new URLSearchParams();
+  params.set('login', username);
+  params.set('password_hash', passwordHash);
+  params.set('id', String(postId));
+  params.set('score', '1');
+
+  const res = await fetch(`${BASE_URL}/post/vote.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+
+  const text = await res.text();
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Non-JSON response — fall through to the generic HTTP-status-based check below.
+  }
+  if (!res.ok || (parsed && parsed.success === false)) {
+    throw new Error((parsed && parsed.reason) || `failed to vote (HTTP ${res.status}): ${text.slice(0, 200)}`);
+  }
+}
+
 export async function postComment(postId: number, body: string, username: string, passwordHash: string): Promise<void> {
   const result = await postCommentRaw(postId, body, username, passwordHash);
   if (!result.success) throw new Error(result.reason || 'failed to post comment');

@@ -2,9 +2,10 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
-import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, verifyLogin, Comment } from '../api/sakugabooru';
+import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, verifyLogin, voteUp, Comment } from '../api/sakugabooru';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
 import { getStoredCredentials, saveCredentials, clearCredentials, hashPassword, StoredCredentials } from '../api/auth';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 // Same fps assumption as the bookmarklet: sakugabooru's post data doesn't
@@ -99,6 +100,7 @@ function renderRichText(
 
 export default function ViewerScreen({ route, navigation }: any) {
   const { post } = route.params;
+  const insets = useSafeAreaInsets();
   const playable = isVideoFile(post.file_url);
   const fps = Number(post.frame_rate) || DEFAULT_FPS;
   const bigStep = Math.max(1, Math.round(fps));
@@ -152,6 +154,30 @@ export default function ViewerScreen({ route, navigation }: any) {
   // keychain (SecureStore) and persist across the whole app, not per-post.
   const [credentials, setCredentials] = useState<StoredCredentials | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [currentScore, setCurrentScore] = useState(post.score);
+  const [voting, setVoting] = useState(false);
+  const [voted, setVoted] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
+
+  const doVote = useCallback(async () => {
+    if (voted || voting) return;
+    if (!credentials) {
+      setLoginOpen(true);
+      return;
+    }
+    setVoting(true);
+    setVoteError(null);
+    try {
+      await voteUp(post.id, credentials.username, credentials.passwordHash);
+      const fresh = await getPostById(post.id); // refetch for the real updated score rather than guess +1
+      setCurrentScore(fresh ? fresh.score : currentScore + 1);
+      setVoted(true);
+    } catch (e: any) {
+      setVoteError(e.message || 'vote failed');
+    } finally {
+      setVoting(false);
+    }
+  }, [credentials, voted, voting, post.id, currentScore]);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
@@ -379,12 +405,27 @@ export default function ViewerScreen({ route, navigation }: any) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
     >
-      <ScrollView style={styles.container} ref={scrollRef}>
+      <ScrollView
+        style={styles.container}
+        ref={scrollRef}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+      >
       <View style={styles.headRow}>
-        <Text style={styles.badge}>▲ {post.score}</Text>
+        <TouchableOpacity
+          style={[styles.badge, styles.voteBadge, voted && styles.voteBadgeVoted]}
+          onPress={doVote}
+          disabled={voting || voted}
+        >
+          {voting ? (
+            <ActivityIndicator color={colors.amber} size="small" />
+          ) : (
+            <Text style={styles.badgeText}>{voted ? '✓' : '▲'} {currentScore}</Text>
+          )}
+        </TouchableOpacity>
         <Text style={styles.badge}>{post.rating}</Text>
         <Text style={styles.postId}>#{post.id}</Text>
       </View>
+      {voteError && <Text style={styles.error}>{voteError}</Text>}
 
       {playable ? (
         <>
@@ -689,6 +730,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
   },
+  badgeText: { color: colors.amber, fontSize: 11, fontFamily: 'monospace' },
+  voteBadge: { minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  voteBadgeVoted: { borderWidth: 1, borderColor: colors.amber },
   postId: { color: colors.dim, fontSize: 11, fontFamily: 'monospace', marginLeft: 'auto' },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   image: { width: '100%', height: 300, backgroundColor: '#000' },

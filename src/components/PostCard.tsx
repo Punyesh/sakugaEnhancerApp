@@ -1,5 +1,5 @@
-import React, { useEffect, memo } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect, useState, memo } from 'react';
+import { View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
 import { Post, isVideoFile } from '../api/sakugabooru';
@@ -42,14 +42,29 @@ function PostCard({
     p.muted = true;
   });
 
+  // The video source loading is a network fetch, not something we can make
+  // instant — but showing real feedback during that gap (rather than a
+  // static thumbnail with no indication anything is happening) makes the
+  // wait feel much shorter even though it isn't actually shorter.
+  const [buffering, setBuffering] = useState(false);
+
   useEffect(() => {
     if (!playable) return;
     if (selected) {
-      player.replaceAsync(post.file_url).then(() => player.play()).catch(() => {});
+      setBuffering(true);
+      player.replaceAsync(post.file_url).then(() => player.play()).catch(() => setBuffering(false));
     } else {
+      setBuffering(false);
       player.replaceAsync(null).catch(() => {});
     }
   }, [selected, playable, player, post.file_url]);
+
+  useEffect(() => {
+    const sub = player.addListener('playingChange', (e) => {
+      if (e.isPlaying) setBuffering(false);
+    });
+    return () => sub.remove();
+  }, [player]);
 
   return (
     <TouchableOpacity
@@ -73,6 +88,11 @@ function PostCard({
       {playable && !selected && (
         <View style={styles.vidmark}>
           <Text style={styles.vidmarkText}>▶</Text>
+        </View>
+      )}
+      {selected && buffering && (
+        <View style={styles.bufferOverlay}>
+          <ActivityIndicator color={colors.amber} size="small" />
         </View>
       )}
       <View style={styles.score}>
@@ -102,6 +122,16 @@ const styles = StyleSheet.create({
   cardSelected: { borderColor: colors.amber, borderWidth: 2 },
   thumb: { width: '100%', height: '100%' },
   videoOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  bufferOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
   vidmark: {
     position: 'absolute',
     top: 3,

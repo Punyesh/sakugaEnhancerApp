@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { View, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -121,14 +122,16 @@ export default function App() {
   }, []);
 
   return (
-    <NavigationContainer theme={theme}>
-      <StatusBar style="light" />
-      <RootStack.Navigator screenOptions={screenOptions}>
-        <RootStack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-        {/* Viewer sits at the root, shared by both tabs — either tab's
-            navigation.navigate('Viewer', ...) bubbles up to find it here. */}
-        <RootStack.Screen name="Viewer" component={ViewerScreen} options={{ title: 'Clip' }} />
-      </RootStack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer theme={theme}>
+        <StatusBar style="light" />
+        <RootStack.Navigator screenOptions={screenOptions}>
+          <RootStack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+          {/* Viewer sits at the root, shared by both tabs — either tab's
+              navigation.navigate('Viewer', ...) bubbles up to find it here. */}
+          <RootStack.Screen name="Viewer" component={ViewerScreen} options={{ title: 'Clip' }} />
+        </RootStack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
