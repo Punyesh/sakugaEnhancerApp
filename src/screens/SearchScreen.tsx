@@ -106,6 +106,7 @@ export default function SearchScreen({ navigation }: any) {
   }, [results, excludedTags]);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [tagTypes, setTagTypes] = useState<Record<string, number>>({});
 
   // Stable references shared by every card, rather than a fresh inline
   // closure per card per render — required for PostCard's memo() to
@@ -173,6 +174,7 @@ export default function SearchScreen({ navigation }: any) {
       // chained into the same try block.
       try {
         const typeMap = await getTagTypeMap();
+        setTagTypes(typeMap); // also drives chip coloring below, not just the Stats sync
         const artistTag = tagsToUse.find((t) => typeMap[t] === 1) || null;
         setSyncedArtist(artistTag);
         if (syncToStats) setStatsSeedTag(artistTag);
@@ -191,9 +193,10 @@ export default function SearchScreen({ navigation }: any) {
   // since that path is more often used to string several tags together
   // before searching once.)
   const selectSuggestion = useCallback(
-    (tagName: string) => {
-      const finalTags = [...tags, tagName];
+    (tag: Tag) => {
+      const finalTags = [...tags, tag.name];
       setTags(finalTags);
+      setTagTypes((prev) => ({ ...prev, [tag.name]: tag.type })); // known immediately, no need to wait for search to complete
       setPending('');
       setSuggestions(null);
       performSearch(finalTags);
@@ -309,21 +312,22 @@ export default function SearchScreen({ navigation }: any) {
           {suggestions && suggestions.length > 0 && (
             <View style={styles.suggestList}>
               {suggestions.map((t) => (
-                <TouchableOpacity key={t.name} style={styles.suggestRow} onPress={() => selectSuggestion(t.name)}>
-                  <View style={styles.suggestNameRow}>
-                    <Text
-                      style={[
-                        styles.suggestName,
-                        t.type === 1 && styles.suggestNameArtist,
-                        t.type === 3 && styles.suggestNameShow,
-                      ]}
-                    >
-                      {t.name}
-                    </Text>
+                <TouchableOpacity key={t.name} style={styles.suggestRow} onPress={() => selectSuggestion(t)}>
+                  <Text
+                    style={[
+                      styles.suggestName,
+                      t.type === 1 && styles.suggestNameArtist,
+                      t.type === 3 && styles.suggestNameShow,
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {t.name}
+                  </Text>
+                  <View style={styles.suggestRightCol}>
                     {t.type === 1 && <Text style={styles.suggestType}>artist</Text>}
                     {t.type === 3 && <Text style={styles.suggestType}>series</Text>}
+                    <Text style={styles.suggestCount}>{t.count}</Text>
                   </View>
-                  <Text style={styles.suggestCount}>{t.count}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -346,8 +350,24 @@ export default function SearchScreen({ navigation }: any) {
           {tags.length > 0 && (
             <View style={styles.chips}>
               {tags.map((t, i) => (
-                <Pressable key={i} style={styles.chip} onPress={() => removeTag(i)}>
-                  <Text style={styles.chipText}>{t} ×</Text>
+                <Pressable
+                  key={i}
+                  style={[
+                    styles.chip,
+                    tagTypes[t] === 1 && styles.chipArtist,
+                    tagTypes[t] === 3 && styles.chipShow,
+                  ]}
+                  onPress={() => removeTag(i)}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      tagTypes[t] === 1 && styles.chipTextArtist,
+                      tagTypes[t] === 3 && styles.chipTextShow,
+                    ]}
+                  >
+                    {t} ×
+                  </Text>
                 </Pressable>
               ))}
               <Pressable style={styles.clearChip} onPress={() => setTags([])}>
@@ -496,8 +516,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.line,
   },
-  suggestNameRow: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 6 },
-  suggestName: { color: colors.text, fontSize: 13 },
+  suggestRightCol: { alignItems: 'flex-end', flexShrink: 0, marginLeft: 8 },
+  suggestName: { color: colors.text, fontSize: 13, flex: 1, flexShrink: 1 },
   suggestNameArtist: { color: colors.amber, fontWeight: '600' },
   suggestNameShow: { color: colors.link },
   suggestType: { color: colors.dim, fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -552,7 +572,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
+  chipArtist: { borderColor: colors.amber, backgroundColor: colors.amberDim },
+  chipShow: { borderColor: colors.link },
   chipText: { color: colors.text, fontSize: 12 },
+  chipTextArtist: { color: colors.amber, fontWeight: '600' },
+  chipTextShow: { color: colors.link },
   clearChip: {
     borderWidth: 1,
     borderColor: colors.red,

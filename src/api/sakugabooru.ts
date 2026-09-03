@@ -113,13 +113,29 @@ async function fetchAllTagsPaged(onProgress?: (n: number) => void): Promise<Tag[
   return all;
 }
 
+// A real tag name (like "fighting") should never contain a URL, whitespace,
+// or be absurdly long — any of those is a strong signal of corrupted data
+// (e.g. a URL somehow getting spliced into the middle of a real tag name),
+// not a legitimate tag. Filtering this at load time means one bad cached
+// entry can't linger indefinitely or show up as a garbled search suggestion.
+function isValidTagName(name: string): boolean {
+  if (!name || name.length > 100) return false;
+  if (/https?:\/\//i.test(name)) return false;
+  if (/\s/.test(name)) return false;
+  return true;
+}
+
 async function readTagCache(): Promise<Tag[] | null> {
   try {
     const raw = await AsyncStorage.getItem(TAG_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { tags: Tag[]; savedAt: number };
     if (Date.now() - parsed.savedAt > TAG_CACHE_TTL_MS) return null; // stale, refetch
-    return parsed.tags;
+    const clean = parsed.tags.filter((t) => isValidTagName(t.name));
+    if (clean.length !== parsed.tags.length) {
+      writeTagCache(clean); // persist the cleaned version so this doesn't need re-filtering every load
+    }
+    return clean;
   } catch {
     return null; // corrupt or missing — just refetch, not worth surfacing an error for
   }
@@ -142,9 +158,10 @@ export function ensureAllTags(onProgress?: (n: number) => void): Promise<Tag[]> 
         return cached;
       }
       return fetchAllTagsPaged(onProgress).then((tags) => {
-        allTagsCache = tags;
-        writeTagCache(tags);
-        return tags;
+        const clean = tags.filter((t) => isValidTagName(t.name));
+        allTagsCache = clean;
+        writeTagCache(clean);
+        return clean;
       });
     })
     .catch((err) => {
