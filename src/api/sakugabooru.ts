@@ -532,3 +532,144 @@ export async function verifyLogin(username: string, passwordHash: string): Promi
   return !reason.includes('denied');
 }
 
+// ---------- playlists (pools) ----------
+// Confirmed directly from sakugabooru's own /help/pools page and the
+// standard Danbooru/Moebooru pool API convention: pools support a real
+// pool[is_public] flag (1 or 0) at creation, so private and public
+// playlists are both genuinely the same underlying mechanism, not two
+// separate systems. Unlike comments/voting, the exact response shape for
+// listing/fetching pool metadata isn't backed by the same level of
+// documentation — built against the general REST convention this same
+// codebase uses elsewhere (confirmed for /tag.json), worth confirming live.
+export interface Pool {
+  id: number;
+  name: string;
+  description: string;
+  is_public: boolean;
+  post_count: number;
+  user_id?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface PoolActionResponse {
+  success: boolean;
+  reason?: string;
+}
+
+async function poolAction(path: string, params: URLSearchParams): Promise<any> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+  const text = await res.text();
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Non-JSON response — fall through to the generic HTTP-status-based check below.
+  }
+  if (!res.ok || (parsed && parsed.success === false)) {
+    throw new Error((parsed && parsed.reason) || `HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return parsed;
+}
+
+export async function createPool(
+  name: string,
+  isPublic: boolean,
+  description: string,
+  username: string,
+  passwordHash: string
+): Promise<Pool> {
+  const params = new URLSearchParams();
+  params.set('login', username);
+  params.set('password_hash', passwordHash);
+  params.set('pool[name]', name);
+  params.set('pool[is_public]', isPublic ? '1' : '0');
+  params.set('pool[description]', description);
+  const result = await poolAction('/pool/create.json', params);
+  await addMyPoolId(result.id);
+  return result as Pool;
+}
+
+export async function addPostToPool(poolId: number, postId: number, username: string, passwordHash: string): Promise<void> {
+  const params = new URLSearchParams();
+  params.set('login', username);
+  params.set('password_hash', passwordHash);
+  params.set('pool_id', String(poolId));
+  params.set('post_id', String(postId));
+  await poolAction('/pool/add_post.json', params);
+}
+
+export async function removePostFromPool(poolId: number, postId: number, username: string, passwordHash: string): Promise<void> {
+  const params = new URLSearchParams();
+  params.set('login', username);
+  params.set('password_hash', passwordHash);
+  params.set('pool_id', String(poolId));
+  params.set('post_id', String(postId));
+  await poolAction('/pool/remove_post.json', params);
+}
+
+export async function destroyPool(poolId: number, username: string, passwordHash: string): Promise<void> {
+  const params = new URLSearchParams();
+  params.set('login', username);
+  params.set('password_hash', passwordHash);
+  params.set('id', String(poolId));
+  await poolAction('/pool/destroy.json', params);
+  await removeMyPoolId(poolId);
+}
+
+/** Searches public pools by name (the site's own "Search Pools" feature). */
+export async function searchPools(query: string): Promise<Pool[]> {
+  return getJSON<Pool[]>(`/pool.json?query=${encodeURIComponent(query)}`);
+}
+
+export async function getPool(poolId: number): Promise<Pool | null> {
+  const results = await getJSON<Pool[]>(`/pool.json?id=${poolId}`);
+  return results[0] || null;
+}
+
+/** A pool's posts, via the standard pool:ID tag search syntax on the same
+ * post-search endpoint already used everywhere else — reusing proven,
+ * already-working infrastructure rather than a separate, untested endpoint. */
+export async function getPoolPosts(
+  poolId: number,
+  order: 'score' | 'date' | 'random' = 'date',
+  limit = 100,
+  page = 1
+): Promise<Post[]> {
+  return searchPosts([`pool:${poolId}`], order, limit, page);
+}
+
+// ---------- local index of "my" playlists ----------
+// Real, server-side pools — this is just an on-device pointer to which ones
+// are "mine," sidestepping genuine uncertainty about how (or whether) the
+// server's own pool-listing can be filtered by owner, without faking any
+// actual playlist data locally.
+const MY_POOLS_KEY = 'sk-my-pools-v1';
+
+export async function getMyPoolIds(): Promise<number[]> {
+  try {
+    const raw = await AsyncStorage.getItem(MY_POOLS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function addMyPoolId(id: number): Promise<void> {
+  const ids = await getMyPoolIds();
+  if (!ids.includes(id)) {
+    ids.push(id);
+    await AsyncStorage.setItem(MY_POOLS_KEY, JSON.stringify(ids)).catch(() => {});
+  }
+}
+
+export async function removeMyPoolId(id: number): Promise<void> {
+  const ids = await getMyPoolIds();
+  const filtered = ids.filter((x) => x !== id);
+  await AsyncStorage.setItem(MY_POOLS_KEY, JSON.stringify(filtered)).catch(() => {});
+}
+

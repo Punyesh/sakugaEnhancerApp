@@ -2,10 +2,12 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
-import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, verifyLogin, voteUp, Comment } from '../api/sakugabooru';
+import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, voteUp, Comment } from '../api/sakugabooru';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
-import { getStoredCredentials, saveCredentials, clearCredentials, hashPassword, StoredCredentials } from '../api/auth';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../hooks/useAuth';
+import LoginModal from '../components/LoginModal';
+import AddToPlaylistModal from '../components/AddToPlaylistModal';
 import { Ionicons } from '@expo/vector-icons';
 
 // Same fps assumption as the bookmarklet: sakugabooru's post data doesn't
@@ -150,10 +152,11 @@ export default function ViewerScreen({ route, navigation }: any) {
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
-  // Auth is checked once per screen open — credentials live in the OS
-  // keychain (SecureStore) and persist across the whole app, not per-post.
-  const [credentials, setCredentials] = useState<StoredCredentials | null>(null);
+  // Auth is shared across the app via useAuth() now — credentials live in
+  // the OS keychain (SecureStore) and persist across screens, not per-post.
+  const { credentials, setCredentials, logout } = useAuth();
   const [loginOpen, setLoginOpen] = useState(false);
+  const [addToPlaylistOpen, setAddToPlaylistOpen] = useState(false);
   const [currentScore, setCurrentScore] = useState(post.score);
   const [voting, setVoting] = useState(false);
   const [voted, setVoted] = useState(false);
@@ -178,44 +181,9 @@ export default function ViewerScreen({ route, navigation }: any) {
       setVoting(false);
     }
   }, [credentials, voted, voting, post.id, currentScore]);
-  const [loginUsername, setLoginUsername] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [postingComment, setPostingComment] = useState(false);
   const [postCommentError, setPostCommentError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getStoredCredentials().then(setCredentials);
-  }, []);
-
-  const doLogin = useCallback(async () => {
-    if (!loginUsername.trim() || !loginPassword) return;
-    setLoggingIn(true);
-    setLoginError(null);
-    try {
-      const hash = await hashPassword(loginPassword);
-      const ok = await verifyLogin(loginUsername.trim(), hash);
-      if (!ok) {
-        setLoginError('username or password is incorrect');
-        return;
-      }
-      const creds = await saveCredentials(loginUsername.trim(), loginPassword);
-      setCredentials(creds);
-      setLoginOpen(false);
-      setLoginPassword('');
-    } catch (e: any) {
-      setLoginError(e.message || 'login failed');
-    } finally {
-      setLoggingIn(false);
-    }
-  }, [loginUsername, loginPassword]);
-
-  const doLogout = useCallback(async () => {
-    await clearCredentials();
-    setCredentials(null);
-  }, []);
 
   const doPostComment = useCallback(async () => {
     if (!credentials || !newCommentBody.trim()) return;
@@ -423,6 +391,12 @@ export default function ViewerScreen({ route, navigation }: any) {
           )}
         </TouchableOpacity>
         <Text style={styles.badge}>{post.rating}</Text>
+        <TouchableOpacity
+          style={styles.playlistAddBtn}
+          onPress={() => (credentials ? setAddToPlaylistOpen(true) : setLoginOpen(true))}
+        >
+          <Ionicons name="add-circle-outline" size={16} color={colors.amber} />
+        </TouchableOpacity>
         <Text style={styles.postId}>#{post.id}</Text>
       </View>
       {voteError && <Text style={styles.error}>{voteError}</Text>}
@@ -583,7 +557,7 @@ export default function ViewerScreen({ route, navigation }: any) {
             <View style={styles.composerBox}>
               <View style={styles.loggedInRow}>
                 <Text style={styles.loggedInText}>logged in as {credentials.username}</Text>
-                <TouchableOpacity onPress={doLogout}>
+                <TouchableOpacity onPress={logout}>
                   <Text style={styles.logoutLink}>log out</Text>
                 </TouchableOpacity>
               </View>
@@ -657,56 +631,22 @@ export default function ViewerScreen({ route, navigation }: any) {
     </ScrollView>
     </KeyboardAvoidingView>
 
-    <Modal visible={loginOpen} transparent animationType="fade" onRequestClose={() => setLoginOpen(false)}>
-      <KeyboardAvoidingView
-        style={styles.modalBackdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Log In</Text>
-          <TextInput
-            style={styles.composerInputSingle}
-            placeholder="username"
-            placeholderTextColor={colors.dim}
-            value={loginUsername}
-            onChangeText={setLoginUsername}
-            autoCapitalize="none"
-            autoFocus
-          />
-          <TextInput
-            style={styles.composerInputSingle}
-            placeholder="password"
-            placeholderTextColor={colors.dim}
-            value={loginPassword}
-            onChangeText={setLoginPassword}
-            secureTextEntry
-          />
-          <TouchableOpacity
-            style={[styles.postCommentBtn, (!loginUsername.trim() || !loginPassword) && styles.trimBtnDisabled]}
-            disabled={!loginUsername.trim() || !loginPassword || loggingIn}
-            onPress={doLogin}
-          >
-            {loggingIn ? (
-              <ActivityIndicator color={colors.amber} size="small" />
-            ) : (
-              <Text style={styles.postCommentBtnText}>Log In</Text>
-            )}
-          </TouchableOpacity>
-          {loginError && <Text style={styles.error}>{loginError}</Text>}
-          <TouchableOpacity
-            style={styles.modalCancel}
-            onPress={() => {
-              setLoginOpen(false);
-              setLoginError(null);
-              setLoginUsername('');
-              setLoginPassword('');
-            }}
-          >
-            <Text style={styles.modalCancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+    <LoginModal
+      visible={loginOpen}
+      onClose={() => setLoginOpen(false)}
+      onSuccess={(creds) => {
+        setCredentials(creds);
+        setLoginOpen(false);
+      }}
+    />
+    {credentials && (
+      <AddToPlaylistModal
+        visible={addToPlaylistOpen}
+        postId={post.id}
+        credentials={credentials}
+        onClose={() => setAddToPlaylistOpen(false)}
+      />
+    )}
     </>
   );
 }
@@ -733,6 +673,7 @@ const styles = StyleSheet.create({
   badgeText: { color: colors.amber, fontSize: 11, fontFamily: 'monospace' },
   voteBadge: { minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   voteBadgeVoted: { borderWidth: 1, borderColor: colors.amber },
+  playlistAddBtn: { padding: 4 },
   postId: { color: colors.dim, fontSize: 11, fontFamily: 'monospace', marginLeft: 'auto' },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   image: { width: '100%', height: 300, backgroundColor: '#000' },

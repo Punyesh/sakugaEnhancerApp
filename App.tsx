@@ -13,11 +13,14 @@ import ShowSearchScreen from './src/screens/ShowSearchScreen';
 import ShowDetailScreen from './src/screens/ShowDetailScreen';
 import EpisodeResultsScreen from './src/screens/EpisodeResultsScreen';
 import ViewerScreen from './src/screens/ViewerScreen';
+import PlaylistsScreen from './src/screens/PlaylistsScreen';
+import PlaylistDetailScreen from './src/screens/PlaylistDetailScreen';
 
 const RootStack = createNativeStackNavigator();
 const Tabs = createBottomTabNavigator();
 const SearchStackNav = createNativeStackNavigator();
 const ShowsStackNav = createNativeStackNavigator();
+const PlaylistsStackNav = createNativeStackNavigator();
 
 const theme = {
   ...DarkTheme,
@@ -78,6 +81,22 @@ function ShowsStack() {
   );
 }
 
+// Same reasoning as ShowsStack — PlaylistDetail is specific to this tab
+// (unlike Viewer, which is shared/reachable from anywhere), so it gets its
+// own nested stack for real native back-navigation.
+function PlaylistsStack() {
+  return (
+    <PlaylistsStackNav.Navigator screenOptions={screenOptions}>
+      <PlaylistsStackNav.Screen
+        name="PlaylistsHome"
+        component={PlaylistsScreen}
+        options={{ title: 'Playlists' }}
+      />
+      <PlaylistsStackNav.Screen name="PlaylistDetail" component={PlaylistDetailScreen} />
+    </PlaylistsStackNav.Navigator>
+  );
+}
+
 function MainTabs() {
   return (
     <Tabs.Navigator
@@ -102,6 +121,14 @@ function MainTabs() {
         options={{
           title: 'Shows',
           tabBarIcon: ({ color, size }) => <Ionicons name="tv-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="PlaylistsTab"
+        component={PlaylistsStack}
+        options={{
+          title: 'Playlists',
+          tabBarIcon: ({ color, size }) => <Ionicons name="list-outline" size={size} color={color} />,
         }}
       />
     </Tabs.Navigator>

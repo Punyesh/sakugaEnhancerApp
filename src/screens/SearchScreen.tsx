@@ -350,15 +350,7 @@ export default function SearchScreen({ navigation }: any) {
           {tags.length > 0 && (
             <View style={styles.chips}>
               {tags.map((t, i) => (
-                <Pressable
-                  key={i}
-                  style={[
-                    styles.chip,
-                    tagTypes[t] === 1 && styles.chipArtist,
-                    tagTypes[t] === 3 && styles.chipShow,
-                  ]}
-                  onPress={() => removeTag(i)}
-                >
+                <Pressable key={i} style={styles.chip} onPress={() => removeTag(i)}>
                   <Text
                     style={[
                       styles.chipText,
@@ -572,8 +564,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  chipArtist: { borderColor: colors.amber, backgroundColor: colors.amberDim },
-  chipShow: { borderColor: colors.link },
   chipText: { color: colors.text, fontSize: 12 },
   chipTextArtist: { color: colors.amber, fontWeight: '600' },
   chipTextShow: { color: colors.link },
