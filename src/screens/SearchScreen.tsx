@@ -19,12 +19,12 @@ import EmptyState from '../components/EmptyState';
 
 type Order = 'score' | 'score_asc' | 'date' | 'id_asc' | 'random';
 
-const SORT_OPTIONS: { value: Order; label: string }[] = [
-  { value: 'score', label: 'Top Score' },
-  { value: 'score_asc', label: 'Lowest Score' },
-  { value: 'date', label: 'Newest' },
-  { value: 'id_asc', label: 'Oldest' },
+// Top Score and Newest stay as their own fixed, always-visible buttons —
+// everything else lives behind the third "more" button as a dropdown list.
+const MORE_SORT_OPTIONS: { value: Order; label: string }[] = [
   { value: 'random', label: 'Random' },
+  { value: 'score_asc', label: 'Lowest Score' },
+  { value: 'id_asc', label: 'Oldest' },
 ];
 type Mode = 'results' | 'stats';
 
@@ -391,33 +391,59 @@ export default function SearchScreen({ navigation }: any) {
             </View>
           )}
 
-          <View>
-            <TouchableOpacity style={styles.sortSelector} onPress={() => setSortMenuOpen((o) => !o)}>
-              <Text style={styles.sortSelectorText}>
-                Sort: {SORT_OPTIONS.find((o) => o.value === order)?.label}
-              </Text>
-              <Ionicons name={sortMenuOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.amber} />
+          <View style={styles.sortRow}>
+            <TouchableOpacity
+              style={[styles.sortBtn, order === 'score' && styles.sortBtnActive]}
+              onPress={() => setOrder('score')}
+            >
+              <Text style={[styles.sortBtnText, order === 'score' && styles.sortBtnTextActive]}>Top Score</Text>
             </TouchableOpacity>
-            {sortMenuOpen && (
-              <View style={styles.sortMenu}>
-                {SORT_OPTIONS.map((o) => (
-                  <TouchableOpacity
-                    key={o.value}
-                    style={styles.sortMenuRow}
-                    onPress={() => {
-                      setOrder(o.value);
-                      setSortMenuOpen(false);
-                    }}
-                  >
-                    <Text style={[styles.sortMenuRowText, order === o.value && styles.sortMenuRowTextActive]}>
-                      {o.label}
-                    </Text>
-                    {order === o.value && <Ionicons name="checkmark" size={16} color={colors.amber} />}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+            <TouchableOpacity
+              style={[styles.sortBtn, order === 'date' && styles.sortBtnActive]}
+              onPress={() => setOrder('date')}
+            >
+              <Text style={[styles.sortBtnText, order === 'date' && styles.sortBtnTextActive]}>Newest</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sortBtn, order !== 'score' && order !== 'date' && styles.sortBtnActive]}
+              onPress={() => setSortMenuOpen((o) => !o)}
+            >
+              <Text
+                style={[
+                  styles.sortBtnText,
+                  order !== 'score' && order !== 'date' && styles.sortBtnTextActive,
+                ]}
+              >
+                {order !== 'score' && order !== 'date'
+                  ? MORE_SORT_OPTIONS.find((o) => o.value === order)?.label
+                  : 'More'}
+              </Text>
+              <Ionicons
+                name={sortMenuOpen ? 'chevron-up' : 'chevron-down'}
+                size={12}
+                color={order !== 'score' && order !== 'date' ? colors.amber : colors.dim}
+              />
+            </TouchableOpacity>
           </View>
+          {sortMenuOpen && (
+            <View style={styles.sortMenu}>
+              {MORE_SORT_OPTIONS.map((o) => (
+                <TouchableOpacity
+                  key={o.value}
+                  style={styles.sortMenuRow}
+                  onPress={() => {
+                    setOrder(o.value);
+                    setSortMenuOpen(false);
+                  }}
+                >
+                  <Text style={[styles.sortMenuRowText, order === o.value && styles.sortMenuRowTextActive]}>
+                    {o.label}
+                  </Text>
+                  {order === o.value && <Ionicons name="checkmark" size={16} color={colors.amber} />}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
 
           {tags.length > 0 && (
             <View style={styles.chips}>
@@ -629,18 +655,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
-  sortSelector: {
+  sortRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  sortBtn: {
+    flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 4,
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 8,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    marginBottom: 8,
+    borderRadius: 14,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  sortSelectorText: { color: colors.amber, fontSize: 13, fontWeight: '600' },
+  sortBtnActive: { borderColor: colors.amber, backgroundColor: colors.amberDim },
+  sortBtnText: { color: colors.dim, fontSize: 12 },
+  sortBtnTextActive: { color: colors.amber, fontWeight: 'bold' },
   sortMenu: {
     backgroundColor: colors.panel,
     borderWidth: 1,

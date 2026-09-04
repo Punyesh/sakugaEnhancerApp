@@ -5,6 +5,18 @@ import { colors } from '../theme/colors';
 import { Post, isVideoFile } from '../api/sakugabooru';
 import { Ionicons } from '@expo/vector-icons';
 
+// sakugabooru's own API doesn't expose clip length at all (confirmed
+// directly on their forum) — but the video file itself has its duration
+// embedded, readable once the player actually loads it. Only feasible for
+// the one selected/playing card, not every card in the grid, since reading
+// this would mean loading every single video just to find out how long it
+// is — exactly the cost the two-tap select pattern exists to avoid.
+function formatDuration(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds - m * 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 // Two-tap pattern in place of hover, which has no touch equivalent: first
 // tap selects the card, which plays a muted preview right there — only the
 // ONE selected card ever plays, not every visible video at once, keeping
@@ -47,14 +59,17 @@ function PostCard({
   // static thumbnail with no indication anything is happening) makes the
   // wait feel much shorter even though it isn't actually shorter.
   const [buffering, setBuffering] = useState(false);
+  const [duration, setDuration] = useState<number | null>(null);
 
   useEffect(() => {
     if (!playable) return;
     if (selected) {
       setBuffering(true);
+      setDuration(null);
       player.replaceAsync(post.file_url).then(() => player.play()).catch(() => setBuffering(false));
     } else {
       setBuffering(false);
+      setDuration(null);
       player.replaceAsync(null).catch(() => {});
     }
   }, [selected, playable, player, post.file_url]);
@@ -62,6 +77,13 @@ function PostCard({
   useEffect(() => {
     const sub = player.addListener('playingChange', (e) => {
       if (e.isPlaying) setBuffering(false);
+    });
+    return () => sub.remove();
+  }, [player]);
+
+  useEffect(() => {
+    const sub = player.addListener('sourceLoad', (e) => {
+      if (e.duration > 0) setDuration(e.duration);
     });
     return () => sub.remove();
   }, [player]);
@@ -98,6 +120,11 @@ function PostCard({
       <View style={styles.score}>
         <Text style={styles.scoreText}>▲ {post.score}</Text>
       </View>
+      {selected && duration !== null && (
+        <View style={styles.durationBadge}>
+          <Text style={styles.durationBadgeText}>{formatDuration(duration)}</Text>
+        </View>
+      )}
       {selected && (
         <View style={styles.expandHint}>
           <Ionicons name="expand-outline" size={13} color={colors.text} />
@@ -150,6 +177,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
   },
   scoreText: { color: colors.amber, fontSize: 10, fontFamily: 'monospace' },
+  durationBadge: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 8,
+    paddingHorizontal: 5,
+  },
+  durationBadgeText: { color: colors.text, fontSize: 9, fontFamily: 'monospace' },
   expandHint: {
     position: 'absolute',
     bottom: 4,
