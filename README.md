@@ -6,13 +6,13 @@ Built with React Native + Expo, powered entirely by sakugabooru's own public API
 
 ## Features
 
-- **Search** — tag chips with live, color-coded suggestions, sort order, exclude-filter, infinite scroll
+- **Search** — tag chips with live, color-coded suggestions, sort order, exclude-filter, infinite scroll, "solo cuts only" filter (hide collaborative cuts, show only clips with one credited animator)
 - **Animator Stats** — score, activity-by-year chart, top co-tags
 - **Shows** — live show search, episode grid, jump-to-episode, related titles
 - **Viewer** — native video playback with frame-by-frame stepping, tag breakdown, comments with quote formatting and tappable timestamps/post links
 - **Trim & Download** — hardware-accelerated video trimming, download or save straight to your gallery
 - **Login, Comments & Voting** — log in with your sakugabooru account to post comments and vote on cuts
-- **Pools** — create and browse public or private clip collections
+- **Pools** — create private, on-device pools to organize your favorite clips, and browse public pools other users have made on sakugabooru itself
 
 ## Get the app
 
