@@ -13,6 +13,7 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
   const { credentials } = useAuth();
 
   const [pool, setPool] = useState<Pool | null>(null);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,9 +56,9 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
         setIsOwner(myIds.includes(poolId));
         setPosts(firstPage);
         setHasMore(firstPage.length === PAGE_SIZE);
-        navigation.setOptions({ title: poolData?.name || 'Playlist' });
+        navigation.setOptions({ title: poolData?.name || 'Pool' });
       } catch (e: any) {
-        if (!isCancelled()) setError(e.message || 'failed to load playlist');
+        if (!isCancelled()) setError(e.message || 'failed to load pool');
       } finally {
         if (!isCancelled()) setLoading(false);
       }
@@ -113,7 +114,7 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
 
   const doDeletePlaylist = useCallback(() => {
     if (!credentials) return;
-    Alert.alert('Delete Playlist', `Delete "${pool?.name}"? This can't be undone.`, [
+    Alert.alert('Delete Pool', `Delete "${pool?.name}"? This can't be undone.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -152,7 +153,17 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
               </TouchableOpacity>
             )}
           </View>
-          {!!pool.description && <Text style={styles.description}>{pool.description}</Text>}
+          {!!pool.description && (
+            <TouchableOpacity style={styles.descriptionToggle} onPress={() => setDescriptionOpen((o) => !o)}>
+              <Ionicons
+                name={descriptionOpen ? 'chevron-up' : 'chevron-down'}
+                size={13}
+                color={colors.dim}
+              />
+              <Text style={styles.descriptionToggleText}> description</Text>
+            </TouchableOpacity>
+          )}
+          {!!pool.description && descriptionOpen && <Text style={styles.description}>{pool.description}</Text>}
         </View>
       )}
 
@@ -196,12 +207,12 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
           maxToRenderPerBatch={9}
           windowSize={5}
           updateCellsBatchingPeriod={50}
-          ListEmptyComponent={<Text style={styles.empty}>No clips in this playlist yet.</Text>}
+          ListEmptyComponent={<Text style={styles.empty}>No clips in this pool yet.</Text>}
           ListFooterComponent={
             loadingMore ? (
               <ActivityIndicator color={colors.amber} style={{ marginVertical: 16 }} />
             ) : !hasMore && posts.length > 0 ? (
-              <Text style={styles.endNote}>— end of playlist —</Text>
+              <Text style={styles.endNote}>— end of pool —</Text>
             ) : null
           }
           renderItem={({ item }) => (
@@ -232,6 +243,8 @@ const styles = StyleSheet.create({
   postCount: { color: colors.dim, fontSize: 11 },
   deleteBtn: { marginLeft: 'auto', padding: 4 },
   description: { color: colors.text, fontSize: 12, marginTop: 8, lineHeight: 17 },
+  descriptionToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  descriptionToggleText: { color: colors.dim, fontSize: 11 },
   selectedStrip: {
     flexDirection: 'row',
     alignItems: 'center',

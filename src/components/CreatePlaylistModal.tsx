@@ -58,10 +58,10 @@ export default function CreatePlaylistModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>New Playlist</Text>
+          <Text style={styles.modalTitle}>New Pool</Text>
           <TextInput
             style={styles.input}
-            placeholder="playlist name"
+            placeholder="pool name"
             placeholderTextColor={colors.dim}
             value={name}
             onChangeText={setName}
@@ -81,11 +81,11 @@ export default function CreatePlaylistModal({
               size={18}
               color={isPublic ? colors.amber : colors.dim}
             />
-            <Text style={styles.toggleText}>
-              {' '}
-              Public — anyone can find and view this playlist. Unchecked stays private to you.
-            </Text>
+            <Text style={styles.toggleLabel}> Public</Text>
           </TouchableOpacity>
+          <Text style={styles.toggleHelp}>
+            Anyone can find and view a public pool. Unchecked stays private to you.
+          </Text>
           <TouchableOpacity
             style={[styles.btn, !name.trim() && styles.btnDisabled]}
             disabled={!name.trim() || loading}
@@ -136,8 +136,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   textarea: { minHeight: 60, textAlignVertical: 'top' },
-  toggleRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12, paddingRight: 4 },
-  toggleText: { color: colors.dim, fontSize: 11, flex: 1, lineHeight: 15 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center' },
+  toggleLabel: { color: colors.text, fontSize: 13 },
+  toggleHelp: { color: colors.dim, fontSize: 11, lineHeight: 15, marginTop: 4, marginBottom: 12 },
   btn: {
     backgroundColor: colors.amberDim,
     borderWidth: 1,

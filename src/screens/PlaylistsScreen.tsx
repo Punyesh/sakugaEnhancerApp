@@ -124,7 +124,7 @@ export default function PlaylistsScreen({ navigation }: any) {
       <ScrollView>
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>My Playlists</Text>
+            <Text style={styles.sectionTitle}>My Pools</Text>
             {credentials && (
               <TouchableOpacity onPress={() => setCreateOpen(true)} style={styles.newBtn}>
                 <Ionicons name="add" size={16} color={colors.amber} />
@@ -135,23 +135,23 @@ export default function PlaylistsScreen({ navigation }: any) {
 
           {!credentials ? (
             <TouchableOpacity onPress={() => setLoginOpen(true)}>
-              <Text style={styles.loginLink}>Log in to see your playlists</Text>
+              <Text style={styles.loginLink}>Log in to see your pools</Text>
             </TouchableOpacity>
           ) : myPoolsLoading ? (
             <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />
           ) : myPools && myPools.length === 0 ? (
-            <Text style={styles.emptyText}>No playlists yet — tap New to create one.</Text>
+            <Text style={styles.emptyText}>No pools yet — tap New to create one.</Text>
           ) : (
             myPools?.map((p) => <PoolRow key={p.id} pool={p} onPress={() => openPool(p)} />)
           )}
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Browse Public Playlists</Text>
+          <Text style={styles.sectionTitle}>Browse Public Pools</Text>
           <View style={styles.searchRow}>
             <TextInput
               style={styles.searchInput}
-              placeholder="search by name, or leave blank to browse all"
+              placeholder="search by name, or leave blank to browse all pools"
               placeholderTextColor={colors.dim}
               value={query}
               onChangeText={setQuery}
@@ -162,7 +162,7 @@ export default function PlaylistsScreen({ navigation }: any) {
           {browseError && <Text style={styles.error}>{browseError}</Text>}
           {browseResults && !browsing && browseResults.length === 0 && (
             <Text style={styles.emptyText}>
-              {query.trim() ? 'No public playlists matched that.' : 'No public playlists yet.'}
+              {query.trim() ? 'No public pools matched that.' : 'No public pools yet.'}
             </Text>
           )}
           {browseResults?.map((p) => <PoolRow key={p.id} pool={p} onPress={() => openPool(p)} />)}

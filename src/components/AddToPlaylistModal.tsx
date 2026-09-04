@@ -32,7 +32,7 @@ export default function AddToPlaylistModal({
       const results = await Promise.all(ids.map((id) => getPool(id).catch(() => null)));
       setPools(results.filter((p): p is Pool => p !== null));
     } catch (e: any) {
-      setError(e.message || 'failed to load playlists');
+      setError(e.message || 'failed to load pools');
     } finally {
       setLoading(false);
     }
@@ -53,7 +53,7 @@ export default function AddToPlaylistModal({
         await addPostToPool(pool.id, postId, credentials.username, credentials.passwordHash);
         setAddedIds((prev) => new Set(prev).add(pool.id));
       } catch (e: any) {
-        setError(e.message || 'failed to add to playlist');
+        setError(e.message || 'failed to add to pool');
       } finally {
         setAddingId(null);
       }
@@ -66,10 +66,10 @@ export default function AddToPlaylistModal({
       <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add to Playlist</Text>
+            <Text style={styles.modalTitle}>Add to Pool</Text>
             {loading && <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />}
             {!loading && pools && pools.length === 0 && (
-              <Text style={styles.emptyText}>No playlists yet — create one below.</Text>
+              <Text style={styles.emptyText}>No pools yet — create one below.</Text>
             )}
             {!loading && pools && pools.length > 0 && (
               <FlatList
@@ -106,7 +106,7 @@ export default function AddToPlaylistModal({
             {error && <Text style={styles.error}>{error}</Text>}
             <TouchableOpacity style={styles.newPlaylistBtn} onPress={() => setCreateOpen(true)}>
               <Ionicons name="add" size={16} color={colors.amber} />
-              <Text style={styles.newPlaylistText}> New Playlist</Text>
+              <Text style={styles.newPlaylistText}> New Pool</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancel} onPress={onClose}>
               <Text style={styles.cancelText}>Done</Text>

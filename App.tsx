@@ -90,9 +90,13 @@ function PlaylistsStack() {
       <PlaylistsStackNav.Screen
         name="PlaylistsHome"
         component={PlaylistsScreen}
-        options={{ title: 'Playlists' }}
+        options={{ title: 'Pools' }}
       />
-      <PlaylistsStackNav.Screen name="PlaylistDetail" component={PlaylistDetailScreen} />
+      <PlaylistsStackNav.Screen
+        name="PlaylistDetail"
+        component={PlaylistDetailScreen}
+        options={{ title: 'Pool' }}
+      />
     </PlaylistsStackNav.Navigator>
   );
 }
@@ -127,7 +131,7 @@ function MainTabs() {
         name="PlaylistsTab"
         component={PlaylistsStack}
         options={{
-          title: 'Playlists',
+          title: 'Pools',
           tabBarIcon: ({ color, size }) => <Ionicons name="list-outline" size={size} color={color} />,
         }}
       />

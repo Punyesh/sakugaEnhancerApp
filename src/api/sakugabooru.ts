@@ -632,9 +632,15 @@ export async function listPools(page = 1): Promise<Pool[]> {
   return getJSON<Pool[]>(`/pool.json?page=${page}`);
 }
 
+/** Confirmed directly from sakugabooru's own /help/api page: "/pool.xml" is
+ * the list-all endpoint, while "/pool/show.xml" is the dedicated single-pool
+ * lookup — genuinely different endpoints, not the same one with a filter
+ * param. The response shape for /pool/show specifically isn't confirmed
+ * (could be a single object or a one-item array), so this handles both. */
 export async function getPool(poolId: number): Promise<Pool | null> {
-  const results = await getJSON<Pool[]>(`/pool.json?id=${poolId}`);
-  return results[0] || null;
+  const result = await getJSON<Pool | Pool[]>(`/pool/show.json?id=${poolId}`);
+  if (Array.isArray(result)) return result[0] || null;
+  return result || null;
 }
 
 /** A pool's posts, via the standard pool:ID tag search syntax on the same
