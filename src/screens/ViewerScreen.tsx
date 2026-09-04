@@ -56,7 +56,7 @@ function renderRichText(
   handlers: { onSeek: ((seconds: number) => void) | null; onPostLink: (id: number) => void; onExternalLink: (url: string) => void },
   keyPrefix: string
 ) {
-  const regex = /(https?:\/\/\S+)|(\b\d{1,2}:\d{2}\b)/g;
+  const regex = /(https?:\/\/\S+)|(\b(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?\b)/g;
   const nodes: React.ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -82,8 +82,10 @@ function renderRichText(
       );
       lastIndex = match.index + match[1].length; // not match[0].length — trailing punctuation stays as plain text
     } else if (match[2] && handlers.onSeek) {
-      const [mm, ss] = match[2].split(':');
-      const seconds = parseInt(mm, 10) * 60 + parseInt(ss, 10);
+      // Each ':'-separated part multiplies the running total by 60 — handles
+      // M:SS, MM:SS, H:MM:SS, and a fractional-seconds part (e.g. "0:05.9")
+      // uniformly, rather than assuming exactly two whole-number parts.
+      const seconds = match[2].split(':').reduce((total, part) => total * 60 + parseFloat(part), 0);
       const onSeek = handlers.onSeek;
       nodes.push(
         <Text key={`${keyPrefix}-ts-${i++}`} style={styles.timestampLink} onPress={() => onSeek(seconds)}>
@@ -146,6 +148,7 @@ export default function ViewerScreen({ route, navigation }: any) {
   const totalFrames = Math.round(duration * fps);
 
   const [artistTags, setArtistTags] = useState<string[]>([]);
+  const [tagTypeMap, setTagTypeMap] = useState<Record<string, number>>({});
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [comments, setComments] = useState<Comment[] | null>(null);
   const [commentsLoading, setCommentsLoading] = useState(true);
@@ -357,6 +360,7 @@ export default function ViewerScreen({ route, navigation }: any) {
     getTagTypeMap()
       .then((map) => {
         if (cancelled) return;
+        setTagTypeMap(map);
         const all = (post.tags || '').split(/\s+/).filter(Boolean);
         setArtistTags(all.filter((t: string) => map[t] === 1));
         setOtherTags(all.filter((t: string) => map[t] !== 1));
@@ -543,9 +547,13 @@ export default function ViewerScreen({ route, navigation }: any) {
             <Text style={styles.tagsLabel}>Animator</Text>
             <View style={styles.tagWrap}>
               {artistTags.map((t) => (
-                <View key={t} style={styles.artistChip}>
+                <TouchableOpacity
+                  key={t}
+                  style={styles.artistChip}
+                  onPress={() => navigation.navigate('Main', { screen: 'SearchTab', params: { screen: 'Search', params: { searchTag: t } } })}
+                >
                   <Text style={styles.artistChipText}>{t}</Text>
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
           </>
@@ -553,9 +561,13 @@ export default function ViewerScreen({ route, navigation }: any) {
         <Text style={styles.tagsLabel}>Tags</Text>
         <View style={styles.tagWrap}>
           {otherTags.map((t) => (
-            <View key={t} style={styles.tagChip}>
-              <Text style={styles.tagChipText}>{t}</Text>
-            </View>
+            <TouchableOpacity
+              key={t}
+              style={styles.tagChip}
+              onPress={() => navigation.navigate('Main', { screen: 'SearchTab', params: { screen: 'Search', params: { searchTag: t } } })}
+            >
+              <Text style={[styles.tagChipText, tagTypeMap[t] === 3 && styles.tagChipTextShow]}>{t}</Text>
+            </TouchableOpacity>
           ))}
         </View>
       </View>
@@ -773,6 +785,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   tagChipText: { color: colors.dim, fontSize: 11 },
+  tagChipTextShow: { color: colors.link },
   commentsToggle: {
     flexDirection: 'row',
     alignItems: 'center',

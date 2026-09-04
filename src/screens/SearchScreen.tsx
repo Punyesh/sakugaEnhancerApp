@@ -28,7 +28,7 @@ const MORE_SORT_OPTIONS: { value: Order; label: string }[] = [
 ];
 type Mode = 'results' | 'stats';
 
-export default function SearchScreen({ navigation }: any) {
+export default function SearchScreen({ navigation, route }: any) {
   const [mode, setMode] = useState<Mode>('results');
   const [tags, setTags] = useState<string[]>([]);
   const [pending, setPending] = useState('');
@@ -246,6 +246,19 @@ export default function SearchScreen({ navigation }: any) {
   // pressing Enter via commitTag still just adds a chip without searching,
   // since that path is more often used to string several tags together
   // before searching once.)
+  // Tapping a tag in the Viewer navigates here with searchTag set — starts a
+  // fresh search for just that tag, matching standard booru "click a tag to
+  // search it" convention rather than adding onto whatever was there before.
+  useEffect(() => {
+    const tag = route?.params?.searchTag;
+    if (!tag) return;
+    setMode('results');
+    setTags([tag]);
+    performSearch([tag]);
+    navigation.setParams({ searchTag: undefined }); // consume it — don't re-trigger on next focus
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route?.params?.searchTag]);
+
   const selectSuggestion = useCallback(
     (tag: Tag) => {
       const finalTags = [...tags, tag.name];

@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, Text } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, Linking, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme/colors';
 import { ensureAllTags } from './src/api/sakugabooru';
+import { checkForUpdate, UpdateInfo } from './src/api/updateCheck';
 import SearchScreen from './src/screens/SearchScreen';
 import ShowSearchScreen from './src/screens/ShowSearchScreen';
 import ShowDetailScreen from './src/screens/ShowDetailScreen';
@@ -164,10 +165,31 @@ export default function App() {
     });
   }, []);
 
+  // Deliberately not a silent/automatic update mechanism (e.g. EAS Update) —
+  // just a check + a visible prompt the person can act on or dismiss, so
+  // nothing ever gets pushed onto the device without a choice being made.
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  useEffect(() => {
+    checkForUpdate().then(setUpdateInfo);
+  }, []);
+
   return (
     <SafeAreaProvider>
       <NavigationContainer theme={theme}>
         <StatusBar style="light" />
+        {updateInfo && !updateDismissed && (
+          <View style={styles.updateBanner}>
+            <TouchableOpacity style={{ flex: 1 }} onPress={() => Linking.openURL(updateInfo.url)}>
+              <Text style={styles.updateBannerText}>
+                Update available ({updateInfo.version}) — tap to download
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setUpdateDismissed(true)} hitSlop={10}>
+              <Ionicons name="close" size={16} color={colors.bg} />
+            </TouchableOpacity>
+          </View>
+        )}
         <RootStack.Navigator screenOptions={screenOptions}>
           <RootStack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
           {/* Viewer sits at the root, shared by both tabs — either tab's
@@ -178,3 +200,14 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  updateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.amber,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  updateBannerText: { color: colors.bg, fontSize: 12, fontWeight: '700' },
+});
