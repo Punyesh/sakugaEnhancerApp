@@ -110,6 +110,12 @@ export default function SearchScreen({ navigation }: any) {
     return () => clearTimeout(timer);
   }, [soloOnly]);
 
+  // True for the brief window between the icon toggling and the actual
+  // (heavier) filter catching up — shown as a small spinner instead of the
+  // icon, same reasoning as the PostCard buffering indicator: makes a real,
+  // if brief, wait feel intentional rather than broken.
+  const soloOnlyPending = soloOnly !== soloOnlyApplied;
+
   // "Solo cuts only" contradicts a search that already requires 2+ animators
   // to all be credited together (every result would necessarily have 2+
   // animator tags, so "exactly 1" could never match anything) — disable
@@ -419,12 +425,15 @@ export default function SearchScreen({ navigation }: any) {
 
           {results && !loading && (
             <TouchableOpacity
-              style={[styles.soloToggle, soloOnlyDisabled && styles.soloToggleDisabled]}
+              style={[styles.soloToggle, soloOnly && styles.soloToggleActive, soloOnlyDisabled && styles.soloToggleDisabled]}
               onPress={() => setSoloOnly((s) => !s)}
               disabled={soloOnlyDisabled}
             >
-              <Ionicons name={soloOnly ? 'checkbox' : 'square-outline'} size={16} color={soloOnly ? colors.amber : colors.dim} />
-              <Text style={styles.soloToggleText}> Solo</Text>
+              {soloOnlyPending ? (
+                <ActivityIndicator color={colors.amber} size="small" />
+              ) : (
+                <Ionicons name={soloOnly ? 'person' : 'person-outline'} size={18} color={soloOnly ? colors.amber : colors.dim} />
+              )}
             </TouchableOpacity>
           )}
 
@@ -637,9 +646,18 @@ const styles = StyleSheet.create({
   error: { color: colors.red, marginTop: 12, textAlign: 'center' },
   empty: { color: colors.dim, textAlign: 'center', marginTop: 20 },
   endOfResults: { color: colors.dim, textAlign: 'center', fontSize: 11, marginVertical: 16 },
-  soloToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+  soloToggle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+  },
+  soloToggleActive: { borderColor: colors.amber },
   soloToggleDisabled: { opacity: 0.4 },
-  soloToggleText: { color: colors.text, fontSize: 12 },
   filterSection: {
     marginTop: 10,
     paddingTop: 10,
