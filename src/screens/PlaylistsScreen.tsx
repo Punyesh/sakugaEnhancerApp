@@ -1,34 +1,16 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image, StyleSheet } from 'react-native';
+import React, { useState, useCallback, useEffect, memo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Image, StyleSheet } from 'react-native';
 import { colors } from '../theme/colors';
-import { getMyPoolIds, getPool, searchPools, listPools, getPoolPreviewThumb, Pool } from '../api/sakugabooru';
-import { useAuth } from '../hooks/useAuth';
-import LoginModal from '../components/LoginModal';
+import { getLocalPools, LocalPool } from '../api/localPools';
 import CreatePlaylistModal from '../components/CreatePlaylistModal';
 import { Ionicons } from '@expo/vector-icons';
 
-function PoolRow({ pool, onPress }: { pool: Pool; onPress: () => void }) {
-  // Each row fetches its own preview independently (rather than the parent
-  // list blocking on every pool's thumbnail before showing anything), and
-  // just quietly shows a blank placeholder if a pool has no posts yet or
-  // the fetch fails — not worth an error state for a decorative thumbnail.
-  const [thumb, setThumb] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPoolPreviewThumb(pool.id)
-      .then((url) => {
-        if (!cancelled) setThumb(url);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [pool.id]);
-
+function PoolRow({ pool, onPress }: { pool: LocalPool; onPress: (pool: LocalPool) => void }) {
+  const thumb = pool.posts[0]?.preview_url || pool.posts[0]?.jpeg_url || pool.posts[0]?.sample_url;
   return (
-    <TouchableOpacity style={styles.poolRow} onPress={onPress}>
+    <TouchableOpacity style={styles.poolRow} onPress={() => onPress(pool)}>
       <View style={styles.poolThumbWrap}>
-        {thumb ? <Image source={{ uri: thumb }} style={styles.poolThumb} /> : <View style={styles.poolThumbEmpty} />}
+        {thumb ? <Image source={{ uri: thumb }} style={styles.poolThumb} /> : null}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.poolName}>{pool.name}</Text>
@@ -38,170 +20,88 @@ function PoolRow({ pool, onPress }: { pool: Pool; onPress: () => void }) {
           </Text>
         )}
         <Text style={styles.poolMeta}>
-          {pool.is_public ? 'Public' : 'Private'} · {pool.post_count} clip{pool.post_count === 1 ? '' : 's'}
+          {pool.posts.length} clip{pool.posts.length === 1 ? '' : 's'}
         </Text>
       </View>
       <Ionicons name="chevron-forward" size={16} color={colors.dim} />
     </TouchableOpacity>
   );
 }
+const MemoPoolRow = memo(PoolRow);
 
 export default function PlaylistsScreen({ navigation }: any) {
-  const { credentials, setCredentials } = useAuth();
-  const [loginOpen, setLoginOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [pools, setPools] = useState<LocalPool[] | null>(null);
 
-  const [myPools, setMyPools] = useState<Pool[] | null>(null);
-  const [myPoolsLoading, setMyPoolsLoading] = useState(false);
-
-  const loadMyPools = useCallback(async () => {
-    setMyPoolsLoading(true);
-    try {
-      const ids = await getMyPoolIds();
-      const results = await Promise.all(ids.map((id) => getPool(id).catch(() => null)));
-      setMyPools(results.filter((p): p is Pool => p !== null).reverse()); // newest-created first
-    } finally {
-      setMyPoolsLoading(false);
-    }
+  const load = useCallback(async () => {
+    setPools(await getLocalPools());
   }, []);
 
   useEffect(() => {
-    if (credentials) loadMyPools();
-  }, [credentials, loadMyPools]);
+    load();
+  }, [load]);
 
-  // Refresh whenever this tab regains focus — a playlist created or deleted
-  // from elsewhere (e.g. the Viewer's Add to Playlist flow) should show up
-  // here without needing a manual pull-to-refresh.
+  // Refresh whenever this tab regains focus — a pool created or edited from
+  // elsewhere (e.g. the Viewer's Add to Pool flow) should show up here
+  // without needing a manual pull-to-refresh.
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      if (credentials) loadMyPools();
-    });
+    const unsubscribe = navigation.addListener('focus', load);
     return unsubscribe;
-  }, [navigation, credentials, loadMyPools]);
+  }, [navigation, load]);
 
-  const [query, setQuery] = useState('');
-  const [browseResults, setBrowseResults] = useState<Pool[] | null>(null);
-  const [browsing, setBrowsing] = useState(false);
-  const [browseError, setBrowseError] = useState<string | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Defensive: only ever show pools genuinely marked public in this section,
-  // regardless of what the server's own search/listing actually returns —
-  // this section is specifically "other people's public playlists," so a
-  // private one showing up here would be a real problem even if it's the
-  // server's filtering that's imperfect, not just our own bug.
-  const onlyPublic = (pools: Pool[]) => pools.filter((p) => p.is_public);
-
-  const runBrowse = useCallback(async (q: string) => {
-    setBrowsing(true);
-    setBrowseError(null);
-    try {
-      const results = q.trim() ? await searchPools(q.trim()) : await listPools(1);
-      setBrowseResults(onlyPublic(results));
-    } catch (e: any) {
-      setBrowseError(e.message || 'failed to load playlists');
-    } finally {
-      setBrowsing(false);
-    }
-  }, []);
-
-  // Live, debounced — browse-all runs immediately on mount (empty query),
-  // then re-runs (debounced) as the user types, matching the same pattern
-  // as the Search tab's tag suggestions.
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => runBrowse(query), query ? 300 : 0);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
-
-  const openPool = (pool: Pool) => navigation.push('PlaylistDetail', { poolId: pool.id });
+  const openPool = useCallback(
+    (pool: LocalPool) => navigation.push('LocalPoolDetail', { poolId: pool.id }),
+    [navigation]
+  );
 
   return (
     <View style={styles.container}>
-      <ScrollView>
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <View style={styles.sectionHeader}>
+          <View>
             <Text style={styles.sectionTitle}>My Pools</Text>
-            {credentials && (
-              <TouchableOpacity onPress={() => setCreateOpen(true)} style={styles.newBtn}>
-                <Ionicons name="add" size={16} color={colors.amber} />
-                <Text style={styles.newBtnText}> New</Text>
-              </TouchableOpacity>
-            )}
+            <Text style={styles.sectionCaption}>saved on this device</Text>
           </View>
-
-          {!credentials ? (
-            <TouchableOpacity onPress={() => setLoginOpen(true)}>
-              <Text style={styles.loginLink}>Log in to see your pools</Text>
-            </TouchableOpacity>
-          ) : myPoolsLoading ? (
-            <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />
-          ) : myPools && myPools.length === 0 ? (
-            <Text style={styles.emptyText}>No pools yet — tap New to create one.</Text>
-          ) : (
-            myPools?.map((p) => <PoolRow key={p.id} pool={p} onPress={() => openPool(p)} />)
-          )}
+          <TouchableOpacity onPress={() => setCreateOpen(true)} style={styles.newBtn}>
+            <Ionicons name="add" size={16} color={colors.amber} />
+            <Text style={styles.newBtnText}> New</Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Browse Public Pools</Text>
-          <View style={styles.searchRow}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="search by name, or leave blank to browse all pools"
-              placeholderTextColor={colors.dim}
-              value={query}
-              onChangeText={setQuery}
-              autoCapitalize="none"
-            />
-            {browsing && <ActivityIndicator color={colors.amber} size="small" style={styles.inlineSpinner} />}
-          </View>
-          {browseError && <Text style={styles.error}>{browseError}</Text>}
-          {browseResults && !browsing && browseResults.length === 0 && (
-            <Text style={styles.emptyText}>
-              {query.trim() ? 'No public pools matched that.' : 'No public pools yet.'}
-            </Text>
-          )}
-          {browseResults?.map((p) => <PoolRow key={p.id} pool={p} onPress={() => openPool(p)} />)}
-        </View>
+        {pools === null ? (
+          <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />
+        ) : pools.length === 0 ? (
+          <Text style={styles.emptyText}>No pools yet — tap New to create one.</Text>
+        ) : (
+          pools.map((p) => <MemoPoolRow key={p.id} pool={p} onPress={openPool} />)
+        )}
+
+        <TouchableOpacity style={styles.browseBtn} onPress={() => navigation.push('BrowsePools')}>
+          <Ionicons name="globe-outline" size={16} color={colors.dim} />
+          <Text style={styles.browseBtnText}> Browse Public Pools</Text>
+        </TouchableOpacity>
       </ScrollView>
 
-      <LoginModal
-        visible={loginOpen}
-        onClose={() => setLoginOpen(false)}
-        onSuccess={(creds) => {
-          setCredentials(creds);
-          setLoginOpen(false);
+      <CreatePlaylistModal
+        visible={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(pool) => {
+          setCreateOpen(false);
+          setPools((prev) => [pool, ...(prev || [])]);
         }}
       />
-      {credentials && (
-        <CreatePlaylistModal
-          visible={createOpen}
-          credentials={credentials}
-          onClose={() => setCreateOpen(false)}
-          onCreated={(pool) => {
-            setCreateOpen(false);
-            setMyPools((prev) => [pool, ...(prev || [])]);
-          }}
-        />
-      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  section: { padding: 16, borderBottomWidth: 1, borderBottomColor: colors.line },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  sectionTitle: { color: colors.text, fontSize: 14, fontWeight: 'bold', marginBottom: 10 },
-  newBtn: { flexDirection: 'row', alignItems: 'center' },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
+  sectionTitle: { color: colors.text, fontSize: 14, fontWeight: 'bold' },
+  sectionCaption: { color: colors.dim, fontSize: 10, marginTop: 2 },
+  newBtn: { flexDirection: 'row', alignItems: 'center', paddingTop: 2 },
   newBtnText: { color: colors.amber, fontWeight: '600', fontSize: 13 },
-  loginLink: { color: colors.amber, fontSize: 13, fontWeight: '600' },
   emptyText: { color: colors.dim, fontSize: 12 },
-  error: { color: colors.red, fontSize: 12, marginTop: 6 },
   poolRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -212,21 +112,18 @@ const styles = StyleSheet.create({
   },
   poolThumbWrap: { width: 48, height: 48, borderRadius: 6, overflow: 'hidden', backgroundColor: colors.panel2 },
   poolThumb: { width: '100%', height: '100%' },
-  poolThumbEmpty: { width: '100%', height: '100%' },
   poolName: { color: colors.text, fontSize: 14 },
   poolDescription: { color: colors.dim, fontSize: 11, marginTop: 2 },
   poolMeta: { color: colors.dim, fontSize: 10, fontFamily: 'monospace', marginTop: 3 },
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  searchInput: {
-    flex: 1,
-    backgroundColor: colors.panel,
+  browseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: 8,
-    color: colors.text,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 13,
+    paddingVertical: 12,
+    marginTop: 20,
   },
-  inlineSpinner: { marginLeft: -4 },
+  browseBtnText: { color: colors.dim, fontSize: 13, fontWeight: '600' },
 });

@@ -95,18 +95,57 @@ export default function SearchScreen({ navigation }: any) {
       .map(([tag, count]) => ({ tag, count }));
   }, [results, activeQuery]);
 
-  const visibleResults = useMemo(() => {
-    if (!results) return results;
-    const activeExclusions = Object.keys(excludedTags).filter((t) => excludedTags[t]);
-    if (activeExclusions.length === 0) return results;
-    return results.filter((p) => {
-      const postTags = (p.tags || '').split(/\s+/);
-      return !activeExclusions.some((t) => postTags.includes(t));
-    });
-  }, [results, excludedTags]);
-
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [tagTypes, setTagTypes] = useState<Record<string, number>>({});
+  const [soloOnly, setSoloOnly] = useState(false);
+  // Separate from soloOnly specifically so the checkbox icon can update
+  // instantly on press — filtering + the FlatList re-render that follows
+  // was blocking that same render pass, making even the tap itself feel
+  // laggy. Deferring the actual filter by one tick lets the icon paint
+  // first, independent of how long the heavier work takes.
+  const [soloOnlyApplied, setSoloOnlyApplied] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSoloOnlyApplied(soloOnly), 0);
+    return () => clearTimeout(timer);
+  }, [soloOnly]);
+
+  // "Solo cuts only" contradicts a search that already requires 2+ animators
+  // to all be credited together (every result would necessarily have 2+
+  // animator tags, so "exactly 1" could never match anything) — disable
+  // rather than let someone hit a silently-empty result.
+  const searchedAnimatorCount = activeQuery
+    ? activeQuery.tags.filter((t) => tagTypes[t] === 1).length
+    : 0;
+  const soloOnlyDisabled = searchedAnimatorCount > 1;
+
+  useEffect(() => {
+    if (soloOnlyDisabled && soloOnly) setSoloOnly(false);
+  }, [soloOnlyDisabled, soloOnly]);
+
+  // Solo cut = exactly one animator-type tag on the post. Same client-side
+  // approach as the exclude-tags filter, since there's no server-side tag
+  // syntax for "exactly one of type X" — reuses the same tagTypes map
+  // already populated after every search.
+  const visibleResults = useMemo(() => {
+    if (!results) return results;
+    let filtered = results;
+    const activeExclusions = Object.keys(excludedTags).filter((t) => excludedTags[t]);
+    if (activeExclusions.length > 0) {
+      filtered = filtered.filter((p) => {
+        const postTags = (p.tags || '').split(/\s+/);
+        return !activeExclusions.some((t) => postTags.includes(t));
+      });
+    }
+    if (soloOnlyApplied) {
+      filtered = filtered.filter((p) => {
+        const postTags = (p.tags || '').split(/\s+/).filter(Boolean);
+        const animatorCount = postTags.filter((t) => tagTypes[t] === 1).length;
+        return animatorCount === 1;
+      });
+    }
+    return filtered;
+  }, [results, excludedTags, soloOnlyApplied, tagTypes]);
 
   // Stable references shared by every card, rather than a fresh inline
   // closure per card per render — required for PostCard's memo() to
@@ -378,6 +417,17 @@ export default function SearchScreen({ navigation }: any) {
             <EmptyState icon="film-outline" text="Add a tag above and hit Search to browse clips." />
           )}
 
+          {results && !loading && (
+            <TouchableOpacity
+              style={[styles.soloToggle, soloOnlyDisabled && styles.soloToggleDisabled]}
+              onPress={() => setSoloOnly((s) => !s)}
+              disabled={soloOnlyDisabled}
+            >
+              <Ionicons name={soloOnly ? 'checkbox' : 'square-outline'} size={16} color={soloOnly ? colors.amber : colors.dim} />
+              <Text style={styles.soloToggleText}> Solo</Text>
+            </TouchableOpacity>
+          )}
+
           {results && !loading && facetTags.length > 0 && (
             <View style={styles.filterSection}>
               <TouchableOpacity style={styles.filterToggle} onPress={() => setFilterOpen((o) => !o)}>
@@ -587,6 +637,9 @@ const styles = StyleSheet.create({
   error: { color: colors.red, marginTop: 12, textAlign: 'center' },
   empty: { color: colors.dim, textAlign: 'center', marginTop: 20 },
   endOfResults: { color: colors.dim, textAlign: 'center', fontSize: 11, marginVertical: 16 },
+  soloToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+  soloToggleDisabled: { opacity: 0.4 },
+  soloToggleText: { color: colors.text, fontSize: 12 },
   filterSection: {
     marginTop: 10,
     paddingTop: 10,

@@ -15,6 +15,8 @@ import EpisodeResultsScreen from './src/screens/EpisodeResultsScreen';
 import ViewerScreen from './src/screens/ViewerScreen';
 import PlaylistsScreen from './src/screens/PlaylistsScreen';
 import PlaylistDetailScreen from './src/screens/PlaylistDetailScreen';
+import BrowsePoolsScreen from './src/screens/BrowsePoolsScreen';
+import LocalPoolDetailScreen from './src/screens/LocalPoolDetailScreen';
 
 const RootStack = createNativeStackNavigator();
 const Tabs = createBottomTabNavigator();
@@ -81,9 +83,9 @@ function ShowsStack() {
   );
 }
 
-// Same reasoning as ShowsStack — PlaylistDetail is specific to this tab
-// (unlike Viewer, which is shared/reachable from anywhere), so it gets its
-// own nested stack for real native back-navigation.
+// Same reasoning as ShowsStack — these screens are specific to this tab
+// (unlike Viewer, which is shared/reachable from anywhere), so they get
+// their own nested stack for real native back-navigation.
 function PlaylistsStack() {
   return (
     <PlaylistsStackNav.Navigator screenOptions={screenOptions}>
@@ -91,6 +93,16 @@ function PlaylistsStack() {
         name="PlaylistsHome"
         component={PlaylistsScreen}
         options={{ title: 'Pools' }}
+      />
+      <PlaylistsStackNav.Screen
+        name="LocalPoolDetail"
+        component={LocalPoolDetailScreen}
+        options={{ title: 'Pool' }}
+      />
+      <PlaylistsStackNav.Screen
+        name="BrowsePools"
+        component={BrowsePoolsScreen}
+        options={{ title: 'Browse Public Pools' }}
       />
       <PlaylistsStackNav.Screen
         name="PlaylistDetail"

@@ -391,10 +391,7 @@ export default function ViewerScreen({ route, navigation }: any) {
           )}
         </TouchableOpacity>
         <Text style={styles.badge}>{post.rating}</Text>
-        <TouchableOpacity
-          style={styles.playlistAddBtn}
-          onPress={() => (credentials ? setAddToPlaylistOpen(true) : setLoginOpen(true))}
-        >
+        <TouchableOpacity style={styles.playlistAddBtn} onPress={() => setAddToPlaylistOpen(true)}>
           <Ionicons name="add-circle-outline" size={16} color={colors.amber} />
         </TouchableOpacity>
         <Text style={styles.postId}>#{post.id}</Text>
@@ -639,14 +636,7 @@ export default function ViewerScreen({ route, navigation }: any) {
         setLoginOpen(false);
       }}
     />
-    {credentials && (
-      <AddToPlaylistModal
-        visible={addToPlaylistOpen}
-        postId={post.id}
-        credentials={credentials}
-        onClose={() => setAddToPlaylistOpen(false)}
-      />
-    )}
+    <AddToPlaylistModal visible={addToPlaylistOpen} post={post} onClose={() => setAddToPlaylistOpen(false)} />
     </>
   );
 }

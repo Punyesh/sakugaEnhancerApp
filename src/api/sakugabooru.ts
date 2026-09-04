@@ -552,11 +552,6 @@ export interface Pool {
   updated_at?: string;
 }
 
-interface PoolActionResponse {
-  success: boolean;
-  reason?: string;
-}
-
 async function poolAction(path: string, params: URLSearchParams): Promise<any> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
@@ -576,50 +571,12 @@ async function poolAction(path: string, params: URLSearchParams): Promise<any> {
   return parsed;
 }
 
-export async function createPool(
-  name: string,
-  isPublic: boolean,
-  description: string,
-  username: string,
-  passwordHash: string
-): Promise<Pool> {
-  const params = new URLSearchParams();
-  params.set('login', username);
-  params.set('password_hash', passwordHash);
-  params.set('pool[name]', name);
-  params.set('pool[is_public]', isPublic ? '1' : '0');
-  params.set('pool[description]', description);
-  const result = await poolAction('/pool/create.json', params);
-  await addMyPoolId(result.id);
-  return result as Pool;
-}
-
-export async function addPostToPool(poolId: number, postId: number, username: string, passwordHash: string): Promise<void> {
-  const params = new URLSearchParams();
-  params.set('login', username);
-  params.set('password_hash', passwordHash);
-  params.set('pool_id', String(poolId));
-  params.set('post_id', String(postId));
-  await poolAction('/pool/add_post.json', params);
-}
-
-export async function removePostFromPool(poolId: number, postId: number, username: string, passwordHash: string): Promise<void> {
-  const params = new URLSearchParams();
-  params.set('login', username);
-  params.set('password_hash', passwordHash);
-  params.set('pool_id', String(poolId));
-  params.set('post_id', String(postId));
-  await poolAction('/pool/remove_post.json', params);
-}
-
-export async function destroyPool(poolId: number, username: string, passwordHash: string): Promise<void> {
-  const params = new URLSearchParams();
-  params.set('login', username);
-  params.set('password_hash', passwordHash);
-  params.set('id', String(poolId));
-  await poolAction('/pool/destroy.json', params);
-  await removeMyPoolId(poolId);
-}
+// Pool creation/editing via the real API was removed after confirming it's
+// gated behind an account permission level ("privileged") that most
+// accounts — including a freshly-created test account — don't have. Your
+// own pools are handled entirely locally instead (see api/localPools.ts).
+// These remaining functions are purely read-only, for browsing pools other
+// people have already made public.
 
 /** Searches public pools by name (the site's own "Search Pools" feature). */
 export async function searchPools(query: string): Promise<Pool[]> {
@@ -659,35 +616,5 @@ export async function getPoolPosts(
 export async function getPoolPreviewThumb(poolId: number): Promise<string | null> {
   const posts = await getPoolPosts(poolId, 'date', 1, 1);
   return posts[0]?.preview_url || posts[0]?.jpeg_url || posts[0]?.sample_url || null;
-}
-
-// ---------- local index of "my" playlists ----------
-// Real, server-side pools — this is just an on-device pointer to which ones
-// are "mine," sidestepping genuine uncertainty about how (or whether) the
-// server's own pool-listing can be filtered by owner, without faking any
-// actual playlist data locally.
-const MY_POOLS_KEY = 'sk-my-pools-v1';
-
-export async function getMyPoolIds(): Promise<number[]> {
-  try {
-    const raw = await AsyncStorage.getItem(MY_POOLS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export async function addMyPoolId(id: number): Promise<void> {
-  const ids = await getMyPoolIds();
-  if (!ids.includes(id)) {
-    ids.push(id);
-    await AsyncStorage.setItem(MY_POOLS_KEY, JSON.stringify(ids)).catch(() => {});
-  }
-}
-
-export async function removeMyPoolId(id: number): Promise<void> {
-  const ids = await getMyPoolIds();
-  const filtered = ids.filter((x) => x !== id);
-  await AsyncStorage.setItem(MY_POOLS_KEY, JSON.stringify(filtered)).catch(() => {});
 }
 

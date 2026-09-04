@@ -2,40 +2,25 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Modal, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getMyPoolIds, getPool, addPostToPool, Pool } from '../api/sakugabooru';
-import { StoredCredentials } from '../api/auth';
+import { getLocalPools, addPostToLocalPool, LocalPool } from '../api/localPools';
+import { Post } from '../api/sakugabooru';
 import CreatePlaylistModal from './CreatePlaylistModal';
 
 export default function AddToPlaylistModal({
   visible,
-  postId,
-  credentials,
+  post,
   onClose,
 }: {
   visible: boolean;
-  postId: number;
-  credentials: StoredCredentials;
+  post: Post;
   onClose: () => void;
 }) {
-  const [pools, setPools] = useState<Pool[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [addingId, setAddingId] = useState<number | null>(null);
-  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
-  const [error, setError] = useState<string | null>(null);
+  const [pools, setPools] = useState<LocalPool[] | null>(null);
+  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
 
   const loadPools = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const ids = await getMyPoolIds();
-      const results = await Promise.all(ids.map((id) => getPool(id).catch(() => null)));
-      setPools(results.filter((p): p is Pool => p !== null));
-    } catch (e: any) {
-      setError(e.message || 'failed to load pools');
-    } finally {
-      setLoading(false);
-    }
+    setPools(await getLocalPools());
   }, []);
 
   useEffect(() => {
@@ -46,19 +31,11 @@ export default function AddToPlaylistModal({
   }, [visible, loadPools]);
 
   const doAdd = useCallback(
-    async (pool: Pool) => {
-      setAddingId(pool.id);
-      setError(null);
-      try {
-        await addPostToPool(pool.id, postId, credentials.username, credentials.passwordHash);
-        setAddedIds((prev) => new Set(prev).add(pool.id));
-      } catch (e: any) {
-        setError(e.message || 'failed to add to pool');
-      } finally {
-        setAddingId(null);
-      }
+    async (pool: LocalPool) => {
+      await addPostToLocalPool(pool.id, post);
+      setAddedIds((prev) => new Set(prev).add(pool.id));
     },
-    [postId, credentials]
+    [post]
   );
 
   return (
@@ -67,33 +44,26 @@ export default function AddToPlaylistModal({
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Add to Pool</Text>
-            {loading && <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />}
-            {!loading && pools && pools.length === 0 && (
+            {pools === null && <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />}
+            {pools && pools.length === 0 && (
               <Text style={styles.emptyText}>No pools yet — create one below.</Text>
             )}
-            {!loading && pools && pools.length > 0 && (
+            {pools && pools.length > 0 && (
               <FlatList
                 data={pools}
-                keyExtractor={(p) => String(p.id)}
+                keyExtractor={(p) => p.id}
                 style={{ maxHeight: 260 }}
                 renderItem={({ item }) => {
                   const added = addedIds.has(item.id);
                   return (
-                    <TouchableOpacity
-                      style={styles.poolRow}
-                      disabled={added || addingId === item.id}
-                      onPress={() => doAdd(item)}
-                    >
+                    <TouchableOpacity style={styles.poolRow} disabled={added} onPress={() => doAdd(item)}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.poolName}>{item.name}</Text>
                         <Text style={styles.poolMeta}>
-                          {item.is_public ? 'Public' : 'Private'} · {item.post_count} clip
-                          {item.post_count === 1 ? '' : 's'}
+                          {item.posts.length} clip{item.posts.length === 1 ? '' : 's'}
                         </Text>
                       </View>
-                      {addingId === item.id ? (
-                        <ActivityIndicator color={colors.amber} size="small" />
-                      ) : added ? (
+                      {added ? (
                         <Ionicons name="checkmark-circle" size={20} color={colors.amber} />
                       ) : (
                         <Ionicons name="add-circle-outline" size={20} color={colors.dim} />
@@ -103,7 +73,6 @@ export default function AddToPlaylistModal({
                 }}
               />
             )}
-            {error && <Text style={styles.error}>{error}</Text>}
             <TouchableOpacity style={styles.newPlaylistBtn} onPress={() => setCreateOpen(true)}>
               <Ionicons name="add" size={16} color={colors.amber} />
               <Text style={styles.newPlaylistText}> New Pool</Text>
@@ -116,12 +85,11 @@ export default function AddToPlaylistModal({
       </Modal>
       <CreatePlaylistModal
         visible={createOpen}
-        credentials={credentials}
         onClose={() => setCreateOpen(false)}
         onCreated={async (pool) => {
           setCreateOpen(false);
-          setPools((prev) => (prev ? [...prev, pool] : [pool]));
-          await doAdd(pool); // add the current post immediately, since that's why this was opened in the first place
+          setPools((prev) => (prev ? [pool, ...prev] : [pool]));
+          await doAdd(pool); // add the current post immediately, since that's why this was opened
         }}
       />
     </>
@@ -150,7 +118,6 @@ const styles = StyleSheet.create({
   },
   poolName: { color: colors.text, fontSize: 14 },
   poolMeta: { color: colors.dim, fontSize: 11, marginTop: 2 },
-  error: { color: colors.red, fontSize: 12, textAlign: 'center', marginVertical: 8 },
   newPlaylistBtn: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -7,51 +7,33 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { createPool, Pool } from '../api/sakugabooru';
-import { StoredCredentials } from '../api/auth';
+import { createLocalPool, LocalPool } from '../api/localPools';
 
 export default function CreatePlaylistModal({
   visible,
-  credentials,
   onClose,
   onCreated,
 }: {
   visible: boolean;
-  credentials: StoredCredentials;
   onClose: () => void;
-  onCreated: (pool: Pool) => void;
+  onCreated: (pool: LocalPool) => void;
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [isPublic, setIsPublic] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setName('');
     setDescription('');
-    setIsPublic(false);
-    setError(null);
   };
 
   const doCreate = async () => {
     if (!name.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const pool = await createPool(name.trim(), isPublic, description.trim(), credentials.username, credentials.passwordHash);
-      reset();
-      onCreated(pool);
-    } catch (e: any) {
-      setError(e.message || 'failed to create playlist');
-    } finally {
-      setLoading(false);
-    }
+    const pool = await createLocalPool(name.trim(), description.trim());
+    reset();
+    onCreated(pool);
   };
 
   return (
@@ -75,29 +57,9 @@ export default function CreatePlaylistModal({
             onChangeText={setDescription}
             multiline
           />
-          <TouchableOpacity style={styles.toggleRow} onPress={() => setIsPublic((p) => !p)}>
-            <Ionicons
-              name={isPublic ? 'checkbox' : 'square-outline'}
-              size={18}
-              color={isPublic ? colors.amber : colors.dim}
-            />
-            <Text style={styles.toggleLabel}> Public</Text>
+          <TouchableOpacity style={[styles.btn, !name.trim() && styles.btnDisabled]} disabled={!name.trim()} onPress={doCreate}>
+            <Text style={styles.btnText}>Create</Text>
           </TouchableOpacity>
-          <Text style={styles.toggleHelp}>
-            Anyone can find and view a public pool. Unchecked stays private to you.
-          </Text>
-          <TouchableOpacity
-            style={[styles.btn, !name.trim() && styles.btnDisabled]}
-            disabled={!name.trim() || loading}
-            onPress={doCreate}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.amber} size="small" />
-            ) : (
-              <Text style={styles.btnText}>Create</Text>
-            )}
-          </TouchableOpacity>
-          {error && <Text style={styles.error}>{error}</Text>}
           <TouchableOpacity
             style={styles.cancel}
             onPress={() => {
@@ -136,9 +98,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   textarea: { minHeight: 60, textAlignVertical: 'top' },
-  toggleRow: { flexDirection: 'row', alignItems: 'center' },
-  toggleLabel: { color: colors.text, fontSize: 13 },
-  toggleHelp: { color: colors.dim, fontSize: 11, lineHeight: 15, marginTop: 4, marginBottom: 12 },
   btn: {
     backgroundColor: colors.amberDim,
     borderWidth: 1,
@@ -146,10 +105,10 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingVertical: 8,
     alignItems: 'center',
+    marginTop: 4,
   },
   btnDisabled: { opacity: 0.4 },
   btnText: { color: colors.amber, fontWeight: 'bold', fontSize: 12 },
-  error: { color: colors.red, fontSize: 12, textAlign: 'center', marginVertical: 8 },
   cancel: { alignItems: 'center', marginTop: 10 },
   cancelText: { color: colors.dim, fontSize: 12 },
 });
