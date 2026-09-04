@@ -40,29 +40,37 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [poolData, myIds, firstPage] = await Promise.all([
-        getPool(poolId),
-        getMyPoolIds(),
-        getPoolPosts(poolId, 'date', PAGE_SIZE, 1),
-      ]);
-      setPool(poolData);
-      setIsOwner(myIds.includes(poolId));
-      setPosts(firstPage);
-      setHasMore(firstPage.length === PAGE_SIZE);
-      navigation.setOptions({ title: poolData?.name || 'Playlist' });
-    } catch (e: any) {
-      setError(e.message || 'failed to load playlist');
-    } finally {
-      setLoading(false);
-    }
-  }, [poolId, navigation]);
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [poolData, myIds, firstPage] = await Promise.all([
+          getPool(poolId),
+          getMyPoolIds(),
+          getPoolPosts(poolId, 'date', PAGE_SIZE, 1),
+        ]);
+        if (isCancelled()) return; // a newer load() for a different pool finished first — don't clobber it
+        setPool(poolData);
+        setIsOwner(myIds.includes(poolId));
+        setPosts(firstPage);
+        setHasMore(firstPage.length === PAGE_SIZE);
+        navigation.setOptions({ title: poolData?.name || 'Playlist' });
+      } catch (e: any) {
+        if (!isCancelled()) setError(e.message || 'failed to load playlist');
+      } finally {
+        if (!isCancelled()) setLoading(false);
+      }
+    },
+    [poolId, navigation]
+  );
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poolId]);
 

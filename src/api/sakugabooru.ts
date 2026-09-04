@@ -626,6 +626,12 @@ export async function searchPools(query: string): Promise<Pool[]> {
   return getJSON<Pool[]>(`/pool.json?query=${encodeURIComponent(query)}`);
 }
 
+/** All pools, most-recently-updated first — for browsing without needing to
+ * already know a name to search for. */
+export async function listPools(page = 1): Promise<Pool[]> {
+  return getJSON<Pool[]>(`/pool.json?page=${page}`);
+}
+
 export async function getPool(poolId: number): Promise<Pool | null> {
   const results = await getJSON<Pool[]>(`/pool.json?id=${poolId}`);
   return results[0] || null;
@@ -641,6 +647,12 @@ export async function getPoolPosts(
   page = 1
 ): Promise<Post[]> {
   return searchPosts([`pool:${poolId}`], order, limit, page);
+}
+
+/** A single thumbnail URL for a pool preview — just its first post. */
+export async function getPoolPreviewThumb(poolId: number): Promise<string | null> {
+  const posts = await getPoolPosts(poolId, 'date', 1, 1);
+  return posts[0]?.preview_url || posts[0]?.jpeg_url || posts[0]?.sample_url || null;
 }
 
 // ---------- local index of "my" playlists ----------

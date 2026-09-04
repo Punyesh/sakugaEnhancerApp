@@ -1,15 +1,35 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image, StyleSheet } from 'react-native';
 import { colors } from '../theme/colors';
-import { getMyPoolIds, getPool, searchPools, Pool } from '../api/sakugabooru';
+import { getMyPoolIds, getPool, searchPools, listPools, getPoolPreviewThumb, Pool } from '../api/sakugabooru';
 import { useAuth } from '../hooks/useAuth';
 import LoginModal from '../components/LoginModal';
 import CreatePlaylistModal from '../components/CreatePlaylistModal';
 import { Ionicons } from '@expo/vector-icons';
 
 function PoolRow({ pool, onPress }: { pool: Pool; onPress: () => void }) {
+  // Each row fetches its own preview independently (rather than the parent
+  // list blocking on every pool's thumbnail before showing anything), and
+  // just quietly shows a blank placeholder if a pool has no posts yet or
+  // the fetch fails — not worth an error state for a decorative thumbnail.
+  const [thumb, setThumb] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPoolPreviewThumb(pool.id)
+      .then((url) => {
+        if (!cancelled) setThumb(url);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pool.id]);
+
   return (
     <TouchableOpacity style={styles.poolRow} onPress={onPress}>
+      <View style={styles.poolThumbWrap}>
+        {thumb ? <Image source={{ uri: thumb }} style={styles.poolThumb} /> : <View style={styles.poolThumbEmpty} />}
+      </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.poolName}>{pool.name}</Text>
         {!!pool.description && (
@@ -17,10 +37,10 @@ function PoolRow({ pool, onPress }: { pool: Pool; onPress: () => void }) {
             {pool.description}
           </Text>
         )}
+        <Text style={styles.poolMeta}>
+          {pool.is_public ? 'Public' : 'Private'} · {pool.post_count} clip{pool.post_count === 1 ? '' : 's'}
+        </Text>
       </View>
-      <Text style={styles.poolMeta}>
-        {pool.is_public ? 'Public' : 'Private'} · {pool.post_count}
-      </Text>
       <Ionicons name="chevron-forward" size={16} color={colors.dim} />
     </TouchableOpacity>
   );
@@ -60,25 +80,44 @@ export default function PlaylistsScreen({ navigation }: any) {
   }, [navigation, credentials, loadMyPools]);
 
   const [query, setQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Pool[] | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [browseResults, setBrowseResults] = useState<Pool[] | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runSearch = useCallback(async () => {
-    if (!query.trim()) return;
-    setSearching(true);
-    setSearchError(null);
+  // Defensive: only ever show pools genuinely marked public in this section,
+  // regardless of what the server's own search/listing actually returns —
+  // this section is specifically "other people's public playlists," so a
+  // private one showing up here would be a real problem even if it's the
+  // server's filtering that's imperfect, not just our own bug.
+  const onlyPublic = (pools: Pool[]) => pools.filter((p) => p.is_public);
+
+  const runBrowse = useCallback(async (q: string) => {
+    setBrowsing(true);
+    setBrowseError(null);
     try {
-      const results = await searchPools(query.trim());
-      setSearchResults(results);
+      const results = q.trim() ? await searchPools(q.trim()) : await listPools(1);
+      setBrowseResults(onlyPublic(results));
     } catch (e: any) {
-      setSearchError(e.message || 'search failed');
+      setBrowseError(e.message || 'failed to load playlists');
     } finally {
-      setSearching(false);
+      setBrowsing(false);
     }
+  }, []);
+
+  // Live, debounced — browse-all runs immediately on mount (empty query),
+  // then re-runs (debounced) as the user types, matching the same pattern
+  // as the Search tab's tag suggestions.
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => runBrowse(query), query ? 300 : 0);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  const openPool = (pool: Pool) => navigation.navigate('PlaylistDetail', { poolId: pool.id });
+  const openPool = (pool: Pool) => navigation.push('PlaylistDetail', { poolId: pool.id });
 
   return (
     <View style={styles.container}>
@@ -112,24 +151,21 @@ export default function PlaylistsScreen({ navigation }: any) {
           <View style={styles.searchRow}>
             <TextInput
               style={styles.searchInput}
-              placeholder="search playlists by name"
+              placeholder="search by name, or leave blank to browse all"
               placeholderTextColor={colors.dim}
               value={query}
               onChangeText={setQuery}
-              onSubmitEditing={runSearch}
-              returnKeyType="search"
               autoCapitalize="none"
             />
-            <TouchableOpacity style={styles.searchBtn} onPress={runSearch} disabled={!query.trim()}>
-              <Ionicons name="search" size={16} color={colors.amber} />
-            </TouchableOpacity>
+            {browsing && <ActivityIndicator color={colors.amber} size="small" style={styles.inlineSpinner} />}
           </View>
-          {searching && <ActivityIndicator color={colors.amber} style={{ marginVertical: 12 }} />}
-          {searchError && <Text style={styles.error}>{searchError}</Text>}
-          {searchResults && !searching && searchResults.length === 0 && (
-            <Text style={styles.emptyText}>No public playlists matched that.</Text>
+          {browseError && <Text style={styles.error}>{browseError}</Text>}
+          {browseResults && !browsing && browseResults.length === 0 && (
+            <Text style={styles.emptyText}>
+              {query.trim() ? 'No public playlists matched that.' : 'No public playlists yet.'}
+            </Text>
           )}
-          {searchResults?.map((p) => <PoolRow key={p.id} pool={p} onPress={() => openPool(p)} />)}
+          {browseResults?.map((p) => <PoolRow key={p.id} pool={p} onPress={() => openPool(p)} />)}
         </View>
       </ScrollView>
 
@@ -169,15 +205,18 @@ const styles = StyleSheet.create({
   poolRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: colors.line,
   },
+  poolThumbWrap: { width: 48, height: 48, borderRadius: 6, overflow: 'hidden', backgroundColor: colors.panel2 },
+  poolThumb: { width: '100%', height: '100%' },
+  poolThumbEmpty: { width: '100%', height: '100%' },
   poolName: { color: colors.text, fontSize: 14 },
   poolDescription: { color: colors.dim, fontSize: 11, marginTop: 2 },
-  poolMeta: { color: colors.dim, fontSize: 11, fontFamily: 'monospace' },
-  searchRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  poolMeta: { color: colors.dim, fontSize: 10, fontFamily: 'monospace', marginTop: 3 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   searchInput: {
     flex: 1,
     backgroundColor: colors.panel,
@@ -189,13 +228,5 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 13,
   },
-  searchBtn: {
-    width: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 8,
-  },
+  inlineSpinner: { marginLeft: -4 },
 });
