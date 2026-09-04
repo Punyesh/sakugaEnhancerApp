@@ -6,7 +6,7 @@ import EmptyState from '../components/EmptyState';
 
 interface Props {
   initialTag?: string;
-  onLookupSuccess?: (tag: string) => void;
+  onLookupSuccess?: (tag: string, isAutoSync: boolean) => void;
 }
 
 export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) {
@@ -16,7 +16,7 @@ export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) 
   const [error, setError] = useState<string | null>(null);
 
   const lookup = useCallback(
-    async (overrideName?: string) => {
+    async (overrideName?: string, isAutoSync = false) => {
       const tag = (overrideName ?? name).trim().toLowerCase().replace(/\s+/g, '_');
       if (!tag) return;
       setLoading(true);
@@ -25,7 +25,7 @@ export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) 
       try {
         const posts = await fetchArtistPosts(tag);
         setStats(computeArtistStats(tag, posts));
-        onLookupSuccess?.(tag);
+        onLookupSuccess?.(tag, isAutoSync);
       } catch (e: any) {
         setError(e.message || 'lookup failed');
       } finally {
@@ -37,8 +37,12 @@ export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) 
 
   // Arriving here because Results found an artist tag in the search — run the
   // lookup automatically instead of making the person retype/re-tap it.
+  // isAutoSync=true here specifically so the Results tags aren't clobbered
+  // by this (see onStatsLookup in SearchScreen) — an explicit, manual lookup
+  // below is a deliberate new investigation and should sync back; this
+  // automatic one during an existing multi-tag search shouldn't destroy it.
   useEffect(() => {
-    if (initialTag) lookup(initialTag);
+    if (initialTag) lookup(initialTag, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

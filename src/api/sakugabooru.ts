@@ -23,7 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const TAG_CACHE_KEY = 'sk-tagdict-v1';
 const TAG_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours, matching the bookmarklet's localStorage cache
 
-const BASE_URL = 'https://www.sakugabooru.com';
+export const BASE_URL = 'https://www.sakugabooru.com';
 
 export interface Post {
   id: number;
@@ -64,7 +64,9 @@ function sleep(ms: number) {
 
 // ---------- posts ----------
 
-export function searchPosts(tags: string[], order: 'score' | 'date' | 'random', limit = 24, page = 1) {
+export type SortOrder = 'score' | 'score_asc' | 'date' | 'id_asc' | 'random';
+
+export function searchPosts(tags: string[], order: SortOrder, limit = 24, page = 1) {
   const tagQuery = [...tags, `order:${order}`].join(' ').trim();
   return getJSON<Post[]>(`/post.json?limit=${limit}&page=${page}&tags=${encodeURIComponent(tagQuery)}`);
 }
@@ -605,7 +607,7 @@ export async function getPool(poolId: number): Promise<Pool | null> {
  * already-working infrastructure rather than a separate, untested endpoint. */
 export async function getPoolPosts(
   poolId: number,
-  order: 'score' | 'date' | 'random' = 'date',
+  order: SortOrder = 'date',
   limit = 100,
   page = 1
 ): Promise<Post[]> {

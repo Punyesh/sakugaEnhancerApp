@@ -17,7 +17,15 @@ import ArtistStatsView from './ArtistStatsView';
 import PostCard from '../components/PostCard';
 import EmptyState from '../components/EmptyState';
 
-type Order = 'score' | 'date' | 'random';
+type Order = 'score' | 'score_asc' | 'date' | 'id_asc' | 'random';
+
+const SORT_OPTIONS: { value: Order; label: string }[] = [
+  { value: 'score', label: 'Top Score' },
+  { value: 'score_asc', label: 'Lowest Score' },
+  { value: 'date', label: 'Newest' },
+  { value: 'id_asc', label: 'Oldest' },
+  { value: 'random', label: 'Random' },
+];
 type Mode = 'results' | 'stats';
 
 export default function SearchScreen({ navigation }: any) {
@@ -52,6 +60,7 @@ export default function SearchScreen({ navigation }: any) {
   }, [pending]);
 
   const [order, setOrder] = useState<Order>('score');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [results, setResults] = useState<Post[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -299,13 +308,17 @@ export default function SearchScreen({ navigation }: any) {
     performSearch(finalTags);
   }, [tags, pending, performSearch]);
 
-  // A direct Stats lookup syncs back to Results: pre-fills the tag and re-runs
-  // the search so switching tabs shows matching results without extra taps.
-  // syncToStats=false here — Stats already has fresh data from its own
-  // lookup, no need to remount/refetch it right back.
+  // A direct, manual Stats lookup syncs back to Results — pre-fills the tag
+  // and re-runs the search, since that's a deliberate new investigation.
+  // The automatic sync (isAutoSync=true, when Results already had 2+
+  // animator tags and Stats auto-shows the first one as a convenience)
+  // must NOT do this — it was overwriting the whole tags array down to
+  // just that one animator, silently discarding every other tag in the
+  // search the moment you glanced at Stats.
   const onStatsLookup = useCallback(
-    (tag: string) => {
+    (tag: string, isAutoSync: boolean) => {
       setSyncedArtist(tag);
+      if (isAutoSync) return;
       setTags([tag]);
       performSearch([tag], false);
     },
@@ -378,18 +391,32 @@ export default function SearchScreen({ navigation }: any) {
             </View>
           )}
 
-          <View style={styles.orderRow}>
-            {(['score', 'date', 'random'] as Order[]).map((o) => (
-              <TouchableOpacity
-                key={o}
-                style={[styles.orderBtn, order === o && styles.orderBtnActive]}
-                onPress={() => setOrder(o)}
-              >
-                <Text style={[styles.orderBtnText, order === o && styles.orderBtnTextActive]}>
-                  {o === 'score' ? 'top score' : o === 'date' ? 'newest' : 'random'}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View>
+            <TouchableOpacity style={styles.sortSelector} onPress={() => setSortMenuOpen((o) => !o)}>
+              <Text style={styles.sortSelectorText}>
+                Sort: {SORT_OPTIONS.find((o) => o.value === order)?.label}
+              </Text>
+              <Ionicons name={sortMenuOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.amber} />
+            </TouchableOpacity>
+            {sortMenuOpen && (
+              <View style={styles.sortMenu}>
+                {SORT_OPTIONS.map((o) => (
+                  <TouchableOpacity
+                    key={o.value}
+                    style={styles.sortMenuRow}
+                    onPress={() => {
+                      setOrder(o.value);
+                      setSortMenuOpen(false);
+                    }}
+                  >
+                    <Text style={[styles.sortMenuRowText, order === o.value && styles.sortMenuRowTextActive]}>
+                      {o.label}
+                    </Text>
+                    {order === o.value && <Ionicons name="checkmark" size={16} color={colors.amber} />}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
 
           {tags.length > 0 && (
@@ -602,18 +629,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
-  orderRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
-  orderBtn: {
-    flex: 1,
+  sortSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 14,
-    paddingVertical: 6,
-    alignItems: 'center',
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 8,
   },
-  orderBtnActive: { borderColor: colors.amber, backgroundColor: colors.amberDim },
-  orderBtnText: { color: colors.dim, fontSize: 12 },
-  orderBtnTextActive: { color: colors.amber, fontWeight: 'bold' },
+  sortSelectorText: { color: colors.amber, fontSize: 13, fontWeight: '600' },
+  sortMenu: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 8,
+    marginTop: -4,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  sortMenuRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  sortMenuRowText: { color: colors.text, fontSize: 13 },
+  sortMenuRowTextActive: { color: colors.amber, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
   chip: {
     backgroundColor: colors.panel,

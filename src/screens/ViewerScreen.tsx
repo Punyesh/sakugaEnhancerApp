@@ -1,8 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal, Share } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
-import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, voteUp, Comment } from '../api/sakugabooru';
+import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, voteUp, BASE_URL, Comment } from '../api/sakugabooru';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../hooks/useAuth';
@@ -157,6 +157,11 @@ export default function ViewerScreen({ route, navigation }: any) {
   const { credentials, setCredentials, logout } = useAuth();
   const [loginOpen, setLoginOpen] = useState(false);
   const [addToPlaylistOpen, setAddToPlaylistOpen] = useState(false);
+  // Hides the native play/scrub overlay so the full frame is visible while
+  // stepping through frames one at a time — the custom frame nav below
+  // already covers stepping/seeking, so the native overlay is often just in
+  // the way during careful frame-by-frame review specifically.
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [currentScore, setCurrentScore] = useState(post.score);
   const [voting, setVoting] = useState(false);
   const [voted, setVoted] = useState(false);
@@ -391,6 +396,16 @@ export default function ViewerScreen({ route, navigation }: any) {
           )}
         </TouchableOpacity>
         <Text style={styles.badge}>{post.rating}</Text>
+        <TouchableOpacity
+          style={styles.playlistAddBtn}
+          onPress={() =>
+            Share.share({
+              message: `${BASE_URL}/post/show/${post.id}`,
+            })
+          }
+        >
+          <Ionicons name="link-outline" size={16} color={colors.link} />
+        </TouchableOpacity>
         <TouchableOpacity style={styles.playlistAddBtn} onPress={() => setAddToPlaylistOpen(true)}>
           <Ionicons name="add-circle-outline" size={16} color={colors.amber} />
         </TouchableOpacity>
@@ -400,7 +415,12 @@ export default function ViewerScreen({ route, navigation }: any) {
 
       {playable ? (
         <>
-          <VideoView player={player} style={styles.video} nativeControls />
+          <View style={styles.videoWrap}>
+            <VideoView player={player} style={styles.video} nativeControls={controlsVisible} />
+            <TouchableOpacity style={styles.controlsToggle} onPress={() => setControlsVisible((v) => !v)}>
+              <Ionicons name={controlsVisible ? 'eye-off-outline' : 'eye-outline'} size={16} color={colors.text} />
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.frameBar}>
             <View style={styles.frameRow}>
@@ -665,7 +685,16 @@ const styles = StyleSheet.create({
   voteBadgeVoted: { borderWidth: 1, borderColor: colors.amber },
   playlistAddBtn: { padding: 4 },
   postId: { color: colors.dim, fontSize: 11, fontFamily: 'monospace', marginLeft: 'auto' },
+  videoWrap: { position: 'relative' },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
+  controlsToggle: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 14,
+    padding: 6,
+  },
   image: { width: '100%', height: 300, backgroundColor: '#000' },
   frameBar: { padding: 10, backgroundColor: colors.panel2 },
   frameRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
