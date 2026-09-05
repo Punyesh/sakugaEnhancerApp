@@ -562,15 +562,47 @@ export async function castVote(postId: number, stars: 0 | 1 | 2 | 3, username: s
 //   - undefined: couldn't determine anything (network failure, no session,
 //     page shape unexpected) — callers must leave the existing local guess
 //     alone rather than treating this as "no vote"
+//
+// Extracts the exact JSON object passed to `Post.register_resp({...})` via
+// real brace/string-aware scanning rather than a regex — a naive
+// "votes":{...} pattern match grabbed the WRONG object when the page
+// embedded more than one thing that happened to look similar (confirmed as
+// the actual cause of the bookmarklet showing the same empty-stars bug).
+function extractJsonAfter(html: string, marker: string): string | null {
+  const markerIdx = html.indexOf(marker);
+  if (markerIdx === -1) return null;
+  const start = html.indexOf('{', markerIdx);
+  if (start === -1) return null;
+  let depth = 0, inStr = false, strCh = '', escape = false;
+  for (let i = start; i < html.length; i++) {
+    const ch = html.charAt(i);
+    if (inStr) {
+      if (escape) { escape = false; }
+      else if (ch === '\\') { escape = true; }
+      else if (ch === strCh) { inStr = false; }
+      continue;
+    }
+    if (ch === '"' || ch === '\'') { inStr = true; strCh = ch; continue; }
+    if (ch === '{') { depth++; }
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return html.slice(start, i + 1);
+    }
+  }
+  return null; // never closed — malformed/truncated, give up rather than guess
+}
+
 export async function fetchServerVote(postId: number): Promise<number | null | undefined> {
   try {
     const res = await fetch(`${BASE_URL}/post/show/${postId}`);
     if (!res.ok) return undefined;
     const html = await res.text();
-    const m = html.match(/"votes"\s*:\s*(\{[^}]*\})/);
-    if (!m) return undefined; // couldn't find the votes object at all — unknown, not "no vote"
-    const votesMap = JSON.parse(m[1]);
-    return votesMap[String(postId)] ?? null; // key present -> real value; key absent -> confirmed no vote
+    const jsonStr = extractJsonAfter(html, 'Post.register_resp(');
+    if (!jsonStr) return undefined;
+    const data = JSON.parse(jsonStr);
+    if (!data || typeof data.votes !== 'object' || data.votes === null) return undefined;
+    const v = data.votes[String(postId)];
+    return v === undefined ? null : v; // key present -> real value; key absent -> confirmed no vote
   } catch {
     return undefined; // network/parse failure — unknown, not "no vote"
   }
