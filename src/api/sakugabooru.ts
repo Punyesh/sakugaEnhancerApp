@@ -19,6 +19,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSessionEstablished } from './sessionState';
 
 const TAG_CACHE_KEY = 'sk-tagdict-v1';
 const TAG_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours, matching the bookmarklet's localStorage cache
@@ -593,6 +594,15 @@ function extractJsonAfter(html: string, marker: string): string | null {
 }
 
 export async function fetchServerVote(postId: number): Promise<number | null | undefined> {
+  // An anonymous/logged-out page load and a genuinely logged-in one where
+  // you just haven't voted look identical here (both show an empty `votes`
+  // object for this post) — there's no way to tell them apart from the page
+  // content alone. So if establishSession never actually confirmed success,
+  // don't even make the request: any "confirmed no vote" read in that state
+  // would be a guess wearing a confident face, exactly what caused ratings
+  // to silently reset to empty on every reopen.
+  const sessionOk = await getSessionEstablished();
+  if (!sessionOk) return undefined;
   try {
     const res = await fetch(`${BASE_URL}/post/show/${postId}`);
     if (!res.ok) return undefined;

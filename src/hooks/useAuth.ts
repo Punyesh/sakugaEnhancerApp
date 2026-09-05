@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getStoredCredentials, clearCredentials, StoredCredentials } from '../api/auth';
+import { setSessionEstablished } from '../api/sessionState';
 
 export function useAuth() {
   const [credentials, setCredentials] = useState<StoredCredentials | null>(null);
@@ -14,6 +15,7 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     await clearCredentials();
+    await setSessionEstablished(false); // don't let a stale flag from a previous login linger
     setCredentials(null);
   }, []);
 

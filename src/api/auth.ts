@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { BASE_URL } from './sakugabooru';
+import { setSessionEstablished } from './sessionState';
 
 // Confirmed directly from sakugabooru's own /help/api page: "Simply hashing
 // your plain password will NOT work since Danbooru salts its passwords. The
@@ -80,7 +81,7 @@ export async function establishSession(username: string, password: string): Prom
     // `name="..." value="..."` being adjacent is too fragile.
     const tagMatch = loginPageHtml.match(/<input[^>]*name="authenticity_token"[^>]*>/);
     const valueMatch = tagMatch && tagMatch[0].match(/value="([^"]*)"/);
-    if (!valueMatch) return false;
+    if (!valueMatch) { await setSessionEstablished(false); return false; }
     const token = valueMatch[1];
 
     const params = new URLSearchParams();
@@ -98,8 +99,11 @@ export async function establishSession(username: string, password: string): Prom
     // A successful login redirects to /home; a failed one redirects back to
     // /user/login. fetch follows redirects transparently, so the final
     // response's own URL is the simplest available success signal here.
-    return authRes.ok && !authRes.url.includes('/user/login');
+    const ok = authRes.ok && !authRes.url.includes('/user/login');
+    await setSessionEstablished(ok);
+    return ok;
   } catch {
+    await setSessionEstablished(false);
     return false;
   }
 }
