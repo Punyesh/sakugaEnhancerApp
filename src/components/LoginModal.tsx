@@ -11,7 +11,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { colors } from '../theme/colors';
-import { hashPassword, saveCredentials, StoredCredentials } from '../api/auth';
+import { hashPassword, saveCredentials, establishSession, StoredCredentials } from '../api/auth';
 import { verifyLogin } from '../api/sakugabooru';
 
 export default function LoginModal({
@@ -46,6 +46,10 @@ export default function LoginModal({
         return;
       }
       const creds = await saveCredentials(username.trim(), password);
+      // Best-effort, silent — a real login already succeeded above via the
+      // hash-based check, so this only affects whether vote-checking can
+      // read real per-account state later; it never blocks or fails login.
+      establishSession(username.trim(), password).catch(() => {});
       setPassword('');
       onSuccess(creds);
     } catch (e: any) {

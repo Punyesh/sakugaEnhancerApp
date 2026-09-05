@@ -488,10 +488,25 @@ async function postCommentRaw(postId: number, body: string, username: string, pa
 // from the site's own post page — "Score: N ★★★ (vote up)", clickable
 // per-star. `score` as the param name was already a correct guess (this
 // worked when hardcoded to 1); this just stops assuming the value is always
-// 1. Still no confirmed way to check an existing rating server-side (no
-// vote-check request fires on page load — the site renders that state
-// straight into its own HTML), so that part is still tracked client-side.
-export async function castVote(postId: number, stars: 1 | 2 | 3, username: string, passwordHash: string): Promise<void> {
+// 1. There's still no way to check a rating cold on page load — no
+// vote-check request fires then, and the site's own vote widget HTML is
+// byte-identical across every rating state (confirmed by direct comparison).
+// But the vote response ITSELF turns out to carry real, authoritative state:
+// watching the site's own vote.coffee via DevTools showed the POST to
+// /post/vote.json returns not just success/failure but the fresh post (with
+// the real updated score) plus a `votes` map keyed by post id with *your
+// account's own current vote value* on it, straight from the server — not
+// an echo of what was just sent. So this returns the parsed response
+// instead of void, letting the caller read that real state directly instead
+// of doing a separate refetch afterward.
+export interface CastVoteResult {
+  posts?: Array<{ id: number; score: number; [key: string]: any }>;
+  votes?: Record<string, number>;
+  success: boolean;
+  [key: string]: any;
+}
+
+export async function castVote(postId: number, stars: 1 | 2 | 3, username: string, passwordHash: string): Promise<CastVoteResult | null> {
   const params = new URLSearchParams();
   params.set('login', username);
   params.set('password_hash', passwordHash);
@@ -513,6 +528,36 @@ export async function castVote(postId: number, stars: 1 | 2 | 3, username: strin
   }
   if (!res.ok || (parsed && parsed.success === false)) {
     throw new Error((parsed && parsed.reason) || `failed to vote (HTTP ${res.status}): ${text.slice(0, 200)}`);
+  }
+  return parsed;
+}
+
+// Real per-account vote state does exist and is fetchable after all — just
+// not through the JSON API, a dedicated endpoint, or the DOM (all three came
+// back empty/identical across every rating state when tested directly).
+// It's embedded in the post page's own raw HTML, inside an inline
+// `Post.register_resp({...})` script call, under a `votes` map keyed by post
+// id — confirmed by diffing the actual fetched HTML text itself, not the
+// rendered DOM (which never reflects it; the widget renders the same "off"
+// markup regardless, then a separate inline `vote.updateWidget(...)` call
+// paints the real state client-side from that same embedded data).
+//
+// This only returns real data once a session cookie exists — see
+// establishSession in auth.ts, called at login specifically to make this
+// work, since every other request in this file authenticates statelessly
+// and never gets a session on its own. Before that, or if establishSession
+// silently failed, this just returns null and callers fall back to the
+// local per-device guess.
+export async function fetchServerVote(postId: number): Promise<number | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/post/show/${postId}`);
+    const html = await res.text();
+    const m = html.match(/"votes"\s*:\s*(\{[^}]*\})/);
+    if (!m) return null;
+    const votesMap = JSON.parse(m[1]);
+    return votesMap[String(postId)] || null;
+  } catch {
+    return null; // non-fatal — falls back to the local guess
   }
 }
 

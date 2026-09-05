@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal, Share } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
-import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, castVote, BASE_URL, Comment } from '../api/sakugabooru';
+import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, castVote, fetchServerVote, BASE_URL, Comment } from '../api/sakugabooru';
 import { getVoteRating, setVoteRating } from '../api/voteRatings';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -174,13 +174,34 @@ export default function ViewerScreen({ route, navigation }: any) {
   // Restore whatever this device previously rated this post, if anything —
   // without this, reopening a clip you'd already rated showed the rating
   // option again as if nothing happened, since state used to reset on every
-  // visit rather than being remembered anywhere.
+  // visit rather than being remembered anywhere. This local guess paints
+  // instantly; the real per-account value (if establishSession succeeded at
+  // login) corrects it silently below once that slower fetch resolves.
   useEffect(() => {
     getVoteRating(post.id).then(setRating);
   }, [post.id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchServerVote(post.id).then((serverVote) => {
+      if (cancelled || voting) return; // don't clobber an in-flight vote just cast
+      const real = serverVote || 0;
+      setRating((prev) => {
+        if (real !== (prev || 0)) {
+          setVoteRating(post.id, real).catch(() => {});
+          return real;
+        }
+        return prev;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [post.id]);
+
   const doRate = useCallback(async (stars: 1 | 2 | 3) => {
-    if (rating || voting) return;
+    // Real vote behavior turns out to be mutable — re-tapping a different
+    // star changes an existing rating rather than being rejected, so this
+    // only guards against a second tap landing mid-request.
+    if (voting) return;
     if (!credentials) {
       setLoginOpen(true);
       return;
@@ -188,17 +209,28 @@ export default function ViewerScreen({ route, navigation }: any) {
     setVoting(true);
     setVoteError(null);
     try {
-      await castVote(post.id, stars, credentials.username, credentials.passwordHash);
-      const fresh = await getPostById(post.id); // refetch for the real updated score rather than guess
-      setCurrentScore(fresh ? fresh.score : currentScore + stars);
-      setRating(stars);
-      await setVoteRating(post.id, stars);
+      const result = await castVote(post.id, stars, credentials.username, credentials.passwordHash);
+      const fresh = result?.posts?.[0];
+      // The vote response itself carries the server's own record of your
+      // current vote (result.votes[postId]) — trust that over the value we
+      // just sent, in case the server ever normalizes/rejects it differently
+      // than expected.
+      const myVote = result?.votes?.[String(post.id)];
+      const previousRating = rating || 0;
+      const actualRating = myVote || stars;
+      // Re-voting is delta-based (the server replaces your old star value
+      // rather than adding a new one) — confirmed directly (1★→2★ moved
+      // score by exactly +1) — so if the response is ever missing the fresh
+      // post for some reason, the fallback has to guess score + (new - old).
+      setCurrentScore(fresh ? fresh.score : currentScore + (stars - previousRating));
+      setRating(actualRating);
+      await setVoteRating(post.id, actualRating);
     } catch (e: any) {
       setVoteError(e.message || 'rating failed');
     } finally {
       setVoting(false);
     }
-  }, [credentials, rating, voting, post.id, currentScore]);
+  }, [credentials, voting, post.id, currentScore, rating]);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [postingComment, setPostingComment] = useState(false);
   const [postCommentError, setPostCommentError] = useState<string | null>(null);
@@ -407,7 +439,6 @@ export default function ViewerScreen({ route, navigation }: any) {
               <TouchableOpacity
                 key={n}
                 onPress={() => doRate(n as 1 | 2 | 3)}
-                disabled={!!rating}
                 hitSlop={4}
               >
                 <Ionicons
