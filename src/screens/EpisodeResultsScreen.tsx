@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { colors } from '../theme/colors';
 import { searchPosts, Post } from '../api/sakugabooru';
+import { onScoreChanged } from '../api/voteEvents';
 import PostCard from '../components/PostCard';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -18,6 +19,15 @@ export default function EpisodeResultsScreen({ route, navigation }: any) {
 
   const [posts, setPosts] = useState<Post[] | null>(mode === 'sampled' ? sampledPosts || [] : null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  // A vote cast in ViewerScreen doesn't touch this list on its own — without
+  // this, backing out of a clip you just rated kept showing its old score
+  // until a whole fresh search ran.
+  useEffect(() => {
+    return onScoreChanged((postId, newScore) => {
+      setPosts((prev) => (prev ? prev.map((p) => (p.id === postId ? { ...p, score: newScore } : p)) : prev));
+    });
+  }, []);
 
   const handleSelectCard = useCallback((id: number) => setSelectedId(id), []);
   const handleOpenCard = useCallback(

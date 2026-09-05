@@ -4,6 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
 import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, castVote, fetchServerVote, BASE_URL, Comment } from '../api/sakugabooru';
 import { getVoteRating, setVoteRating } from '../api/voteRatings';
+import { emitScoreChanged } from '../api/voteEvents';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../hooks/useAuth';
@@ -223,9 +224,14 @@ export default function ViewerScreen({ route, navigation }: any) {
       // rather than adding a new one) — confirmed directly (1★→2★ moved
       // score by exactly +1) — so if the response is ever missing the fresh
       // post for some reason, the fallback has to guess score + (new - old).
-      setCurrentScore(fresh ? fresh.score : currentScore + (stars - previousRating));
+      const newScore = fresh ? fresh.score : currentScore + (stars - previousRating);
+      setCurrentScore(newScore);
       setRating(actualRating);
       await setVoteRating(post.id, actualRating);
+      // Whichever list screen this clip was opened from already rendered
+      // its own copy of this post with the old score — nothing here updates
+      // that automatically, so it stayed stale until a fresh search/fetch.
+      emitScoreChanged(post.id, newScore);
     } catch (e: any) {
       setVoteError(e.message || 'rating failed');
     } finally {

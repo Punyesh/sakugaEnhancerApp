@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { colors } from '../theme/colors';
 import { getPool, getPoolPosts, Pool, Post } from '../api/sakugabooru';
+import { onScoreChanged } from '../api/voteEvents';
 import PostCard from '../components/PostCard';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -22,6 +23,15 @@ export default function PlaylistDetailScreen({ route, navigation }: any) {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
+
+  // A vote cast in ViewerScreen doesn't touch this list on its own — without
+  // this, backing out of a clip you just rated kept showing its old score
+  // until the pool was reopened.
+  useEffect(() => {
+    return onScoreChanged((postId, newScore) => {
+      setPosts((prev) => (prev ? prev.map((p) => (p.id === postId ? { ...p, score: newScore } : p)) : prev));
+    });
+  }, []);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const handleSelectCard = useCallback((id: number) => setSelectedId(id), []);

@@ -3,6 +3,7 @@ import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, 
 import { colors } from '../theme/colors';
 import { getLocalPool, deleteLocalPool, removePostFromLocalPool, LocalPool } from '../api/localPools';
 import { Post } from '../api/sakugabooru';
+import { onScoreChanged } from '../api/voteEvents';
 import PostCard from '../components/PostCard';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -12,6 +13,20 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
   const [pool, setPool] = useState<LocalPool | null>(null);
   const [loading, setLoading] = useState(true);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
+
+  // A vote cast in ViewerScreen doesn't touch this list on its own — without
+  // this, backing out of a clip you just rated kept showing its old score
+  // until the pool was reopened. Local pools are documented as frozen
+  // snapshots in storage (score etc. won't stay live-updated there by
+  // design), so this only refreshes the in-memory display for this session,
+  // not the stored pool itself.
+  useEffect(() => {
+    return onScoreChanged((postId, newScore) => {
+      setPool((prev) =>
+        prev ? { ...prev, posts: prev.posts.map((p) => (p.id === postId ? { ...p, score: newScore } : p)) } : prev
+      );
+    });
+  }, []);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const handleSelectCard = useCallback((id: number) => setSelectedId(id), []);

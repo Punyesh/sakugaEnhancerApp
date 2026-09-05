@@ -16,6 +16,7 @@ import { searchPosts, Post, getTagTypeMap, searchTags, Tag } from '../api/sakuga
 import ArtistStatsView from './ArtistStatsView';
 import PostCard from '../components/PostCard';
 import EmptyState from '../components/EmptyState';
+import { onScoreChanged } from '../api/voteEvents';
 
 type Order = 'score' | 'score_asc' | 'date' | 'id' | 'random';
 
@@ -64,6 +65,16 @@ export default function SearchScreen({ navigation, route }: any) {
   const [results, setResults] = useState<Post[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // A vote cast in ViewerScreen doesn't touch this list on its own — without
+  // this, backing out of a clip you just rated kept showing its old score
+  // until a whole fresh search ran.
+  useEffect(() => {
+    return onScoreChanged((postId, newScore) => {
+      setResults((prev) => (prev ? prev.map((p) => (p.id === postId ? { ...p, score: newScore } : p)) : prev));
+    });
+  }, []);
+
   // Whichever artist tag the current query is "about", if any — shown in the
   // Stats tab's label so the two feel connected. Kept separate from
   // statsSeedTag below since these two need different remount behavior.
