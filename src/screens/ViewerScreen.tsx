@@ -185,7 +185,8 @@ export default function ViewerScreen({ route, navigation }: any) {
     let cancelled = false;
     fetchServerVote(post.id).then((serverVote) => {
       if (cancelled || voting) return; // don't clobber an in-flight vote just cast
-      const real = serverVote || 0;
+      if (serverVote === undefined) return; // couldn't determine anything real — leave the local guess alone
+      const real = serverVote || 0; // null (confirmed no vote) -> 0
       setRating((prev) => {
         if (real !== (prev || 0)) {
           setVoteRating(post.id, real).catch(() => {});
@@ -197,7 +198,7 @@ export default function ViewerScreen({ route, navigation }: any) {
     return () => { cancelled = true; };
   }, [post.id]);
 
-  const doRate = useCallback(async (stars: 1 | 2 | 3) => {
+  const doRate = useCallback(async (stars: 0 | 1 | 2 | 3) => {
     // Real vote behavior turns out to be mutable — re-tapping a different
     // star changes an existing rating rather than being rejected, so this
     // only guards against a second tap landing mid-request.
@@ -435,19 +436,29 @@ export default function ViewerScreen({ route, navigation }: any) {
           {voting ? (
             <ActivityIndicator color={colors.amber} size="small" />
           ) : (
-            [1, 2, 3].map((n) => (
+            <>
+              {[1, 2, 3].map((n) => (
+                <TouchableOpacity
+                  key={n}
+                  onPress={() => doRate(n as 1 | 2 | 3)}
+                  hitSlop={4}
+                >
+                  <Ionicons
+                    name={rating && n <= rating ? 'star' : 'star-outline'}
+                    size={16}
+                    color={rating && n <= rating ? colors.amber : colors.dim}
+                  />
+                </TouchableOpacity>
+              ))}
               <TouchableOpacity
-                key={n}
-                onPress={() => doRate(n as 1 | 2 | 3)}
+                onPress={() => rating ? doRate(0) : undefined}
+                disabled={!rating}
                 hitSlop={4}
+                style={{ marginLeft: 2, opacity: rating ? 0.8 : 0.3 }}
               >
-                <Ionicons
-                  name={rating && n <= rating ? 'star' : 'star-outline'}
-                  size={16}
-                  color={rating && n <= rating ? colors.amber : colors.dim}
-                />
+                <Ionicons name="close" size={14} color={colors.dim} />
               </TouchableOpacity>
-            ))
+            </>
           )}
         </View>
         <Text style={styles.badge}>{post.rating}</Text>

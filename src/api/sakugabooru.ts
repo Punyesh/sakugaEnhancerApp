@@ -499,6 +499,10 @@ async function postCommentRaw(postId: number, body: string, username: string, pa
 // an echo of what was just sent. So this returns the parsed response
 // instead of void, letting the caller read that real state directly instead
 // of doing a separate refetch afterward.
+//
+// 0 clears an existing rating — inferred from the site's own vote widget
+// markup (a distinct "star-0" control alongside stars 1-3), not
+// independently confirmed live the way the 1-3 range was.
 export interface CastVoteResult {
   posts?: Array<{ id: number; score: number; [key: string]: any }>;
   votes?: Record<string, number>;
@@ -506,7 +510,7 @@ export interface CastVoteResult {
   [key: string]: any;
 }
 
-export async function castVote(postId: number, stars: 1 | 2 | 3, username: string, passwordHash: string): Promise<CastVoteResult | null> {
+export async function castVote(postId: number, stars: 0 | 1 | 2 | 3, username: string, passwordHash: string): Promise<CastVoteResult | null> {
   const params = new URLSearchParams();
   params.set('login', username);
   params.set('password_hash', passwordHash);
@@ -545,19 +549,30 @@ export async function castVote(postId: number, stars: 1 | 2 | 3, username: strin
 // This only returns real data once a session cookie exists — see
 // establishSession in auth.ts, called at login specifically to make this
 // work, since every other request in this file authenticates statelessly
-// and never gets a session on its own. Before that, or if establishSession
-// silently failed, this just returns null and callers fall back to the
-// local per-device guess.
-export async function fetchServerVote(postId: number): Promise<number | null> {
+// and never gets a session on its own.
+//
+// Return value is three-way on purpose — collapsing it to just number|null
+// caused a real bug: a rating of 3 would reopen showing empty stars, because
+// a failed/no-session fetch and a confirmed "you never voted" were both
+// represented as null, and the caller treated both as "the real vote is 0",
+// silently overwriting a correct local rating with nothing.
+//   - a number (1-3): confirmed real vote, straight from the server
+//   - null: confirmed no vote — the votes map was read successfully and this
+//     post genuinely isn't in it
+//   - undefined: couldn't determine anything (network failure, no session,
+//     page shape unexpected) — callers must leave the existing local guess
+//     alone rather than treating this as "no vote"
+export async function fetchServerVote(postId: number): Promise<number | null | undefined> {
   try {
     const res = await fetch(`${BASE_URL}/post/show/${postId}`);
+    if (!res.ok) return undefined;
     const html = await res.text();
     const m = html.match(/"votes"\s*:\s*(\{[^}]*\})/);
-    if (!m) return null;
+    if (!m) return undefined; // couldn't find the votes object at all — unknown, not "no vote"
     const votesMap = JSON.parse(m[1]);
-    return votesMap[String(postId)] || null;
+    return votesMap[String(postId)] ?? null; // key present -> real value; key absent -> confirmed no vote
   } catch {
-    return null; // non-fatal — falls back to the local guess
+    return undefined; // network/parse failure — unknown, not "no vote"
   }
 }
 
