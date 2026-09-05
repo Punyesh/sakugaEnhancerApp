@@ -2,7 +2,8 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, ActivityIndicator, Linking, TextInput, KeyboardAvoidingView, Platform, Modal, Share } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { colors } from '../theme/colors';
-import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, voteUp, BASE_URL, Comment } from '../api/sakugabooru';
+import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostById, postComment, castVote, BASE_URL, Comment } from '../api/sakugabooru';
+import { getVoteRating, setVoteRating } from '../api/voteRatings';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../hooks/useAuth';
@@ -167,11 +168,19 @@ export default function ViewerScreen({ route, navigation }: any) {
   const [controlsVisible, setControlsVisible] = useState(true);
   const [currentScore, setCurrentScore] = useState(post.score);
   const [voting, setVoting] = useState(false);
-  const [voted, setVoted] = useState(false);
+  const [rating, setRating] = useState<number | null>(null); // 1-3 once rated, this device's own memory of it
   const [voteError, setVoteError] = useState<string | null>(null);
 
-  const doVote = useCallback(async () => {
-    if (voted || voting) return;
+  // Restore whatever this device previously rated this post, if anything —
+  // without this, reopening a clip you'd already rated showed the rating
+  // option again as if nothing happened, since state used to reset on every
+  // visit rather than being remembered anywhere.
+  useEffect(() => {
+    getVoteRating(post.id).then(setRating);
+  }, [post.id]);
+
+  const doRate = useCallback(async (stars: 1 | 2 | 3) => {
+    if (rating || voting) return;
     if (!credentials) {
       setLoginOpen(true);
       return;
@@ -179,16 +188,17 @@ export default function ViewerScreen({ route, navigation }: any) {
     setVoting(true);
     setVoteError(null);
     try {
-      await voteUp(post.id, credentials.username, credentials.passwordHash);
-      const fresh = await getPostById(post.id); // refetch for the real updated score rather than guess +1
-      setCurrentScore(fresh ? fresh.score : currentScore + 1);
-      setVoted(true);
+      await castVote(post.id, stars, credentials.username, credentials.passwordHash);
+      const fresh = await getPostById(post.id); // refetch for the real updated score rather than guess
+      setCurrentScore(fresh ? fresh.score : currentScore + stars);
+      setRating(stars);
+      await setVoteRating(post.id, stars);
     } catch (e: any) {
-      setVoteError(e.message || 'vote failed');
+      setVoteError(e.message || 'rating failed');
     } finally {
       setVoting(false);
     }
-  }, [credentials, voted, voting, post.id, currentScore]);
+  }, [credentials, rating, voting, post.id, currentScore]);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [postingComment, setPostingComment] = useState(false);
   const [postCommentError, setPostCommentError] = useState<string | null>(null);
@@ -388,17 +398,27 @@ export default function ViewerScreen({ route, navigation }: any) {
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
       <View style={styles.headRow}>
-        <TouchableOpacity
-          style={[styles.badge, styles.voteBadge, voted && styles.voteBadgeVoted]}
-          onPress={doVote}
-          disabled={voting || voted}
-        >
+        <Text style={[styles.badge, styles.scoreBadge]}>{currentScore}</Text>
+        <View style={styles.starsRow}>
           {voting ? (
             <ActivityIndicator color={colors.amber} size="small" />
           ) : (
-            <Text style={styles.badgeText}>{voted ? '✓' : '▲'} {currentScore}</Text>
+            [1, 2, 3].map((n) => (
+              <TouchableOpacity
+                key={n}
+                onPress={() => doRate(n as 1 | 2 | 3)}
+                disabled={!!rating}
+                hitSlop={4}
+              >
+                <Ionicons
+                  name={rating && n <= rating ? 'star' : 'star-outline'}
+                  size={16}
+                  color={rating && n <= rating ? colors.amber : colors.dim}
+                />
+              </TouchableOpacity>
+            ))
           )}
-        </TouchableOpacity>
+        </View>
         <Text style={styles.badge}>{post.rating}</Text>
         <TouchableOpacity
           style={styles.playlistAddBtn}
@@ -692,9 +712,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
   },
-  badgeText: { color: colors.amber, fontSize: 11, fontFamily: 'monospace' },
-  voteBadge: { minWidth: 44, alignItems: 'center', justifyContent: 'center' },
-  voteBadgeVoted: { borderWidth: 1, borderColor: colors.amber },
+  scoreBadge: { minWidth: 32, textAlign: 'center' },
+  starsRow: { flexDirection: 'row', gap: 4, alignItems: 'center', minWidth: 44 },
   playlistAddBtn: { padding: 4 },
   postId: { color: colors.dim, fontSize: 11, fontFamily: 'monospace', marginLeft: 'auto' },
   videoWrap: { position: 'relative' },

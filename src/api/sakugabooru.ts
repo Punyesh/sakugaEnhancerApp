@@ -484,18 +484,19 @@ async function postCommentRaw(postId: number, body: string, username: string, pa
   return { success: false, reason: (parsed && parsed.reason) || `HTTP ${res.status}: ${text.slice(0, 200)}` };
 }
 
-// Upvote-only, scoped conservatively — confirmed the endpoint exists directly
-// from sakugabooru's own /help/api page ("The base URL is /post/vote.xml"),
-// but unlike comment-posting, the exact parameter format here isn't backed
-// by the same level of documentation — built against the general
-// Danbooru-family convention (post_vote(post_id, score)) as the
-// best-reasoned guess, genuinely worth confirming with a real test.
-export async function voteUp(postId: number, username: string, passwordHash: string): Promise<void> {
+// Confirmed to actually be a 1–3 star rating (not a flat upvote) directly
+// from the site's own post page — "Score: N ★★★ (vote up)", clickable
+// per-star. `score` as the param name was already a correct guess (this
+// worked when hardcoded to 1); this just stops assuming the value is always
+// 1. Still no confirmed way to check an existing rating server-side (no
+// vote-check request fires on page load — the site renders that state
+// straight into its own HTML), so that part is still tracked client-side.
+export async function castVote(postId: number, stars: 1 | 2 | 3, username: string, passwordHash: string): Promise<void> {
   const params = new URLSearchParams();
   params.set('login', username);
   params.set('password_hash', passwordHash);
   params.set('id', String(postId));
-  params.set('score', '1');
+  params.set('score', String(stars));
 
   const res = await fetch(`${BASE_URL}/post/vote.json`, {
     method: 'POST',
