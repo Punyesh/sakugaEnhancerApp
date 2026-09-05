@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, Linking, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -152,6 +152,26 @@ function MainTabs() {
   );
 }
 
+// Rendered directly under the status bar, outside any screen's own safe-area
+// handling — without accounting for the top inset itself, this sat right on
+// top of the notch/status-bar icons (same category of bug as the comments
+// panel once overlapping the nav bar; same fix, just the top edge this time).
+function UpdateBanner({ updateInfo, onDismiss }: { updateInfo: UpdateInfo; onDismiss: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.updateBanner, { paddingTop: insets.top + 8 }]}>
+      <TouchableOpacity style={{ flex: 1 }} onPress={() => Linking.openURL(updateInfo.url)}>
+        <Text style={styles.updateBannerText}>
+          Update available ({updateInfo.version}) — tap to download
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onDismiss} hitSlop={10}>
+        <Ionicons name="close" size={16} color={colors.bg} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function App() {
   // Speculatively start warming the tag dictionary the moment the app opens
   // (checking the persistent cache first, only hitting the network if it's
@@ -179,16 +199,7 @@ export default function App() {
       <NavigationContainer theme={theme}>
         <StatusBar style="light" />
         {updateInfo && !updateDismissed && (
-          <View style={styles.updateBanner}>
-            <TouchableOpacity style={{ flex: 1 }} onPress={() => Linking.openURL(updateInfo.url)}>
-              <Text style={styles.updateBannerText}>
-                Update available ({updateInfo.version}) — tap to download
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setUpdateDismissed(true)} hitSlop={10}>
-              <Ionicons name="close" size={16} color={colors.bg} />
-            </TouchableOpacity>
-          </View>
+          <UpdateBanner updateInfo={updateInfo} onDismiss={() => setUpdateDismissed(true)} />
         )}
         <RootStack.Navigator screenOptions={screenOptions}>
           <RootStack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
@@ -207,7 +218,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.amber,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingBottom: 8,
   },
   updateBannerText: { color: colors.bg, fontSize: 12, fontWeight: '700' },
 });
