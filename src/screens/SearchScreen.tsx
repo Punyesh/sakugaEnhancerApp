@@ -17,14 +17,14 @@ import ArtistStatsView from './ArtistStatsView';
 import PostCard from '../components/PostCard';
 import EmptyState from '../components/EmptyState';
 
-type Order = 'score' | 'score_asc' | 'date' | 'id_asc' | 'random';
+type Order = 'score' | 'score_asc' | 'date' | 'id' | 'random';
 
 // Top Score and Newest stay as their own fixed, always-visible buttons —
 // everything else lives behind the third "more" button as a dropdown list.
 const MORE_SORT_OPTIONS: { value: Order; label: string }[] = [
   { value: 'random', label: 'Random' },
   { value: 'score_asc', label: 'Lowest Score' },
-  { value: 'id_asc', label: 'Oldest' },
+  { value: 'id', label: 'Oldest' },
 ];
 type Mode = 'results' | 'stats';
 

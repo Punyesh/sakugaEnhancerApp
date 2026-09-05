@@ -64,7 +64,7 @@ function sleep(ms: number) {
 
 // ---------- posts ----------
 
-export type SortOrder = 'score' | 'score_asc' | 'date' | 'id_asc' | 'random';
+export type SortOrder = 'score' | 'score_asc' | 'date' | 'id' | 'random';
 
 export function searchPosts(tags: string[], order: SortOrder, limit = 24, page = 1) {
   const tagQuery = [...tags, `order:${order}`].join(' ').trim();
