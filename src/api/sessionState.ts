@@ -12,15 +12,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // auth.ts already depends on sakugabooru.ts for BASE_URL.
 const KEY = 'sk-session-established';
 
+// Read on every single clip open (as the gate inside fetchServerVote,
+// before it even starts the network correction fetch) — caching in memory
+// after the first read avoids a redundant AsyncStorage round-trip on every
+// subsequent open, same reasoning as the ratings cache in voteRatings.ts.
+let cached: boolean | null = null;
+
 export async function getSessionEstablished(): Promise<boolean> {
+  if (cached !== null) return cached;
   try {
-    return (await AsyncStorage.getItem(KEY)) === '1';
+    cached = (await AsyncStorage.getItem(KEY)) === '1';
   } catch {
-    return false;
+    cached = false;
   }
+  return cached;
 }
 
 export async function setSessionEstablished(established: boolean): Promise<void> {
+  cached = established; // keep the in-memory copy authoritative immediately, don't wait on the write
   try {
     await AsyncStorage.setItem(KEY, established ? '1' : '0');
   } catch {
