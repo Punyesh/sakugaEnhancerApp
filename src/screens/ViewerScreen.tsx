@@ -6,6 +6,7 @@ import { isVideoFile, getTagTypeMap, fetchComments, formatCommentDate, getPostBy
 import { getVoteRating, setVoteRating } from '../api/voteRatings';
 import { emitScoreChanged } from '../api/voteEvents';
 import { performTrim, downloadFull, shareResult, saveToGallery } from '../api/trim';
+import { emitGridRangePicked } from '../api/gridTrimEvents';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../hooks/useAuth';
 import LoginModal from '../components/LoginModal';
@@ -105,7 +106,7 @@ function renderRichText(
 }
 
 export default function ViewerScreen({ route, navigation }: any) {
-  const { post } = route.params;
+  const { post, forGridTrim } = route.params;
   const insets = useSafeAreaInsets();
   const playable = isVideoFile(post.file_url);
   const fps = Number(post.frame_rate) || DEFAULT_FPS;
@@ -384,6 +385,12 @@ export default function ViewerScreen({ route, navigation }: any) {
     }
   }, [hasTrimRange, markIn, markOut, accurateTrim, post.file_url, post.id]);
 
+  const doUseRange = useCallback(() => {
+    if (!hasTrimRange || markIn === null || markOut === null) return;
+    emitGridRangePicked(post.id, markIn, markOut);
+    navigation.goBack();
+  }, [hasTrimRange, markIn, markOut, post.id, navigation]);
+
   const [downloadingFull, setDownloadingFull] = useState(false);
   const doDownloadFull = useCallback(async () => {
     setDownloadingFull(true);
@@ -524,6 +531,9 @@ export default function ViewerScreen({ route, navigation }: any) {
           </View>
 
           <View style={styles.trimSection}>
+            {forGridTrim && (
+              <Text style={styles.trimHint}>mark a range below, then Use This Range to send it back to the grid clip.</Text>
+            )}
             <View style={styles.trimRow}>
               <TouchableOpacity style={styles.frameBtn} onPress={() => setMarkIn(currentTime)}>
                 <Text style={styles.frameBtnText}>Mark In</Text>
@@ -570,17 +580,27 @@ export default function ViewerScreen({ route, navigation }: any) {
                   <Text style={styles.trimBtnText}>⬇ Download Full</Text>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.trimBtn, styles.trimBtnHalf, !hasTrimRange && styles.trimBtnDisabled]}
-                disabled={!hasTrimRange || trimming}
-                onPress={doTrim}
-              >
-                {trimming ? (
-                  <ActivityIndicator color={colors.amber} size="small" />
-                ) : (
-                  <Text style={styles.trimBtnText}>⬇ Download Trim</Text>
-                )}
-              </TouchableOpacity>
+              {forGridTrim ? (
+                <TouchableOpacity
+                  style={[styles.trimBtn, styles.trimBtnHalf, !hasTrimRange && styles.trimBtnDisabled]}
+                  disabled={!hasTrimRange}
+                  onPress={doUseRange}
+                >
+                  <Text style={styles.trimBtnText}>Use This Range</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.trimBtn, styles.trimBtnHalf, !hasTrimRange && styles.trimBtnDisabled]}
+                  disabled={!hasTrimRange || trimming}
+                  onPress={doTrim}
+                >
+                  {trimming ? (
+                    <ActivityIndicator color={colors.amber} size="small" />
+                  ) : (
+                    <Text style={styles.trimBtnText}>⬇ Download Trim</Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
             {trimStatus && <Text style={styles.trimStatus}>{trimStatus}</Text>}
             {trimError && <Text style={styles.error}>{trimError}</Text>}
@@ -802,6 +822,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   trimSection: { padding: 10, backgroundColor: colors.panel2, borderTopWidth: 1, borderTopColor: colors.line },
+  trimHint: { color: colors.dim, fontSize: 11, marginBottom: 8 },
   trimRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
   trimLabel: { color: colors.dim, fontSize: 11, fontFamily: 'monospace' },
   accurateRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },

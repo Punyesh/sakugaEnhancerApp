@@ -82,6 +82,31 @@ export async function downloadFull(
   return { uri: result.outputPath, filename, seconds: (Date.now() - startedAt) / 1000 };
 }
 
+/** Trims a file that's already local (e.g. a freshly generated grid export)
+ * — skips the download step performTrim always does, since there's nothing
+ * remote to fetch here. Same underlying nativeTrim() call either way. */
+export async function trimLocalFile(
+  localUri: string,
+  filenamePrefix: string,
+  inTime: number,
+  outTime: number,
+  accurate: boolean,
+  onStatus?: (status: string) => void
+): Promise<TrimResult> {
+  const startedAt = Date.now();
+  onStatus?.(accurate ? 'trimming (hardware re-encode for frame accuracy)…' : 'trimming (fast mode)…');
+
+  const result = await nativeTrim(localUri, {
+    startTime: Math.round(inTime * 1000),
+    endTime: Math.round(outTime * 1000),
+    enablePreciseTrimming: accurate,
+    outputExt: 'mp4',
+  });
+
+  const filename = result.outputPath.split('/').pop() || `${filenamePrefix}_trim.mp4`;
+  return { uri: result.outputPath, filename, seconds: (Date.now() - startedAt) / 1000 };
+}
+
 export async function shareResult(uri: string) {
   await nativeShare(uri);
 }
