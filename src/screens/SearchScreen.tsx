@@ -349,6 +349,32 @@ export default function SearchScreen({ navigation, route }: any) {
     [performSearch]
   );
 
+  // Cross-tab arrival — e.g. Shows' "Most Frequently Tagged" panel jumping
+  // here with a specific [showTag, animatorTag] pair. seedNonce forces this
+  // to fire even if the exact same tags were seeded once already (params
+  // referencing an identical array wouldn't otherwise be seen as "changed").
+  useEffect(() => {
+    const seedTags = route?.params?.seedTags as string[] | undefined;
+    if (!seedTags || !seedTags.length) return;
+    setMode('results');
+    setTags(seedTags);
+    performSearch(seedTags, false);
+    navigation.setParams({ seedTags: undefined, seedNonce: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route?.params?.seedNonce]);
+
+  // Called from ArtistStatsView's own "most frequent shows" list — same
+  // cross-mode jump as onStatsLookup above, just embedded directly since
+  // Stats is a mode within this same screen rather than a separate one.
+  const onStatsSearchTags = useCallback(
+    (searchTags: string[]) => {
+      setMode('results');
+      setTags(searchTags);
+      performSearch(searchTags, false);
+    },
+    [performSearch]
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.modeRow}>
@@ -374,7 +400,12 @@ export default function SearchScreen({ navigation, route }: any) {
       </View>
 
       {mode === 'stats' ? (
-        <ArtistStatsView key={statsSeedTag || 'none'} initialTag={statsSeedTag || undefined} onLookupSuccess={onStatsLookup} />
+        <ArtistStatsView
+          key={statsSeedTag || 'none'}
+          initialTag={statsSeedTag || undefined}
+          onLookupSuccess={onStatsLookup}
+          onSearchTags={onStatsSearchTags}
+        />
       ) : (
         <>
           <View style={styles.row}>

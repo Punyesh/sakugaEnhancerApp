@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { colors } from '../theme/colors';
-import { getShowEntry, buildEpisodeCandidates, ShowEntry, EpisodeGroup } from '../api/sakugabooru';
+import { getShowEntry, buildEpisodeCandidates, getTagTypeMap, ShowEntry, EpisodeGroup } from '../api/sakugabooru';
+import FreqBarList from '../components/FreqBarList';
 
 export default function ShowDetailScreen({ route, navigation }: any) {
   const { showTag } = route.params as { showTag: string };
@@ -19,7 +20,13 @@ export default function ShowDetailScreen({ route, navigation }: any) {
   const [error, setError] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [relatedOpen, setRelatedOpen] = useState(false);
+  const [animatorsOpen, setAnimatorsOpen] = useState(false);
   const [jumpValue, setJumpValue] = useState('');
+  const [tagTypes, setTagTypes] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    getTagTypeMap().then(setTagTypes).catch(() => {});
+  }, []);
 
   useEffect(() => {
     navigation.setOptions({ title: showTag });
@@ -101,6 +108,38 @@ export default function ShowDetailScreen({ route, navigation }: any) {
     }
   }, [entry, showTag]);
 
+  // Ranks animator-type tags by how often they appear across this show's
+  // sampled posts — same tag-type map already used for chip coloring
+  // elsewhere, just tallied instead of just colored.
+  const topAnimators = useMemo(() => {
+    if (!entry || !Object.keys(tagTypes).length) return [];
+    const freq: Record<string, number> = {};
+    for (const p of entry.posts) {
+      const seen = new Set<string>();
+      for (const t of (p.tags || '').split(/\s+/)) {
+        if (!t || t === showTag || seen.has(t)) continue;
+        if (tagTypes[t] === 1) {
+          freq[t] = (freq[t] || 0) + 1;
+          seen.add(t);
+        }
+      }
+    }
+    return Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, count]) => ({ name, count }));
+  }, [entry, tagTypes, showTag]);
+
+  const openAnimatorInSearch = useCallback(
+    (animatorTag: string) => {
+      // Combined with the show tag rather than searching the animator alone
+      // — this list means "who shows up a lot in this show", so tapping one
+      // means "show me their cuts in this show", not their whole catalog.
+      navigation.navigate('SearchTab', { screen: 'Search', params: { seedTags: [showTag, animatorTag], seedNonce: Date.now() } });
+    },
+    [showTag, navigation]
+  );
+
   if (loading) {
     return (
       <View style={styles.centerFill}>
@@ -163,6 +202,19 @@ export default function ShowDetailScreen({ route, navigation }: any) {
           one "Other" bucket. For a specific known episode, use the jump box below — it searches directly
           rather than relying on this sample.
         </Text>
+      )}
+
+      {topAnimators.length > 0 && (
+        <View style={styles.animatorsSection}>
+          <TouchableOpacity style={styles.miniToggle} onPress={() => setAnimatorsOpen((o) => !o)}>
+            <Text style={styles.miniToggleText}>Most Frequently Tagged {animatorsOpen ? '▴' : '▾'}</Text>
+          </TouchableOpacity>
+          {animatorsOpen && (
+            <View style={{ marginTop: 8 }}>
+              <FreqBarList entries={topAnimators} variant="artist" onPress={openAnimatorInSearch} />
+            </View>
+          )}
+        </View>
       )}
 
       <View style={styles.jumpRow}>
@@ -242,6 +294,7 @@ const styles = StyleSheet.create({
   relatedChipText: { color: colors.text, fontSize: 11 },
   info: { color: colors.dim, fontSize: 12, lineHeight: 18, marginBottom: 12 },
   bold: { color: colors.text, fontWeight: 'bold' },
+  animatorsSection: { marginBottom: 14 },
   jumpRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   input: {
     flex: 1,

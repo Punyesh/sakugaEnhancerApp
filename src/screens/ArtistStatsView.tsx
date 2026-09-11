@@ -1,19 +1,26 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { colors } from '../theme/colors';
-import { fetchArtistPosts, computeArtistStats, ArtistStats } from '../api/sakugabooru';
+import { fetchArtistPosts, computeArtistStats, getTagTypeMap, ArtistStats } from '../api/sakugabooru';
 import EmptyState from '../components/EmptyState';
+import FreqBarList from '../components/FreqBarList';
 
 interface Props {
   initialTag?: string;
   onLookupSuccess?: (tag: string, isAutoSync: boolean) => void;
+  onSearchTags?: (tags: string[]) => void;
 }
 
-export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) {
+export default function ArtistStatsView({ initialTag, onLookupSuccess, onSearchTags }: Props) {
   const [name, setName] = useState(initialTag || '');
   const [stats, setStats] = useState<ArtistStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tagTypes, setTagTypes] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    getTagTypeMap().then(setTagTypes).catch(() => {});
+  }, []);
 
   const lookup = useCallback(
     async (overrideName?: string, isAutoSync = false) => {
@@ -48,6 +55,27 @@ export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) 
 
   const years = stats ? Object.keys(stats.yearCounts).sort() : [];
   const maxYearCount = years.length ? Math.max(...years.map((y) => stats!.yearCounts[y])) : 0;
+
+  // Same tally already gathered for topTags, just narrowed to show/copyright
+  // type tags specifically — no separate pass over the posts needed.
+  const topShows = useMemo(() => {
+    if (!stats || !Object.keys(tagTypes).length) return [];
+    return Object.entries(stats.tagFreq)
+      .filter(([t]) => tagTypes[t] === 3)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, count]) => ({ name, count }));
+  }, [stats, tagTypes]);
+
+  const openShowInSearch = useCallback(
+    (showTag: string) => {
+      // Combined with the animator tag, same convention as the Shows
+      // screen's own animator list — tapping means "show me their cuts in
+      // this show", not their whole catalog.
+      onSearchTags?.([showTag, name.trim().toLowerCase().replace(/\s+/g, '_')]);
+    },
+    [onSearchTags, name]
+  );
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ flexGrow: 1 }}>
@@ -94,6 +122,13 @@ export default function ArtistStatsView({ initialTag, onLookupSuccess }: Props) 
                   <Text style={styles.summaryLabel}>avg score</Text>
                 </View>
               </View>
+
+              {topShows.length > 0 && (
+                <>
+                  <Text style={styles.sectionTitle}>most frequent shows</Text>
+                  <FreqBarList entries={topShows} variant="show" onPress={openShowInSearch} />
+                </>
+              )}
 
               <Text style={styles.sectionTitle}>
                 activity by upload year{' '}

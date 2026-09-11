@@ -233,6 +233,10 @@ export interface ArtistStats {
   avgScore: number;
   yearCounts: Record<string, number>;
   topTags: { tag: string; count: number }[];
+  /** Full per-tag frequency map (not just the top-10 in topTags) — lets the
+   * view filter down to a specific tag type (e.g. shows) without a second
+   * pass over the posts. */
+  tagFreq: Record<string, number>;
 }
 
 export function computeArtistStats(tagName: string, posts: Post[]): ArtistStats {
@@ -262,6 +266,7 @@ export function computeArtistStats(tagName: string, posts: Post[]): ArtistStats 
     avgScore: posts.length ? scoreSum / posts.length : 0,
     yearCounts,
     topTags,
+    tagFreq,
   };
 }
 
