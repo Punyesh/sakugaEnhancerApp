@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt b/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
-index cc9ba6a..bfab37f 100644
+index cc9ba6a..052a106 100644
 --- a/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
 +++ b/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
-@@ -1128,6 +1128,181 @@ open class BaseVideoTrimModule internal constructor(
+@@ -1128,6 +1128,200 @@ open class BaseVideoTrimModule internal constructor(
      )
    }
  
@@ -71,23 +71,42 @@ index cc9ba6a..bfab37f 100644
 +      val trimStart = clip.getDouble("trimStartSec")
 +      val trimDuration = clip.getDouble("trimDurationSec")
 +      val extractedFile = StorageUtil.getCacheOutputPath(reactApplicationContext, "mp4")
-+      val extractCmds = arrayOf(
-+        "-ss", trimStart.toString(), "-t", trimDuration.toString(), "-i", effectivePaths[index]!!,
-+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-y", extractedFile
-+      )
-+      Log.d(TAG, "exportGrid trim-extract[$index] command: ${extractCmds.joinToString(" ")}")
-+      FFmpegKit.executeWithArgumentsAsync(extractCmds, { session ->
-+        if (ReturnCode.isSuccess(session.returnCode)) {
-+          effectivePaths[index] = extractedFile
-+          extractedFiles.add(extractedFile)
-+          extractNext(index + 1, onDone)
++
++      // Hardware mediacodec encoder first, software mpeg4 fallback second —
++      // same two encoders (and same reasoning) already used everywhere else
++      // in this file via reEncodeEncoderConfigs. NOT libx264: confirmed via
++      // a real device failure ("Unrecognized option 'preset'") that this
++      // FFmpegKit build doesn't actually include it — every other call site
++      // in this file already knew that and avoided it; this extraction path
++      // originally didn't and was the one place that broke on a real build.
++      fun attempt(useSoftwareFallback: Boolean) {
++        val encoderArgs = if (!useSoftwareFallback) {
++          listOf("-c:v", "h264_mediacodec", "-b:v", "6M")
 +        } else {
-+          val logs = session.allLogsAsString ?: ""
-+          UiThreadUtil.runOnUiThread {
-+            promise.reject(Exception("exportGrid: trim extraction failed for clip $index\n$logs"))
-+          }
++          listOf("-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p")
 +        }
-+      }, null, null)
++        val extractCmds = (
++          listOf("-ss", trimStart.toString(), "-t", trimDuration.toString(), "-i", effectivePaths[index]!!) +
++          encoderArgs +
++          listOf("-y", extractedFile)
++        ).toTypedArray()
++        Log.d(TAG, "exportGrid trim-extract[$index] command: ${extractCmds.joinToString(" ")}")
++        FFmpegKit.executeWithArgumentsAsync(extractCmds, { session ->
++          if (ReturnCode.isSuccess(session.returnCode)) {
++            effectivePaths[index] = extractedFile
++            extractedFiles.add(extractedFile)
++            extractNext(index + 1, onDone)
++          } else if (!useSoftwareFallback) {
++            attempt(true)
++          } else {
++            val logs = session.allLogsAsString ?: ""
++            UiThreadUtil.runOnUiThread {
++              promise.reject(Exception("exportGrid: trim extraction failed for clip $index\n$logs"))
++            }
++          }
++        }, null, null)
++      }
++      attempt(false)
 +    }
 +
 +    extractNext(0) {
