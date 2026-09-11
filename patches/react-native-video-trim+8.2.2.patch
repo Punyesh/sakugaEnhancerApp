@@ -1,0 +1,516 @@
+diff --git a/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt b/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
+index cc9ba6a..bfab37f 100644
+--- a/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
++++ b/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
+@@ -1128,6 +1128,181 @@ open class BaseVideoTrimModule internal constructor(
+     )
+   }
+ 
++  // Composites multiple clips into a single grid video — real per-clip
++  // positioning and sizing (including a "featured clip above a smaller
++  // grid" layout) is computed in JS (mirrors the logic already proven out
++  // in the browser bookmarklet version of this tool, verified there against
++  // real ffmpeg); this method just takes the already-computed per-clip
++  // boxes and turns them into one FFmpeg command; no grid math happens here.
++  //
++  // Uses an explicit black background plus chained `overlay` filters rather
++  // than `xstack` — confirmed directly (against real ffmpeg, in the
++  // bookmarklet version) that xstack leaves any canvas area no input covers
++  // as uninitialized memory rather than actually black, which rendered as
++  // bright green in exactly the gaps a non-perfectly-divisible clip count
++  // produces. `overlay` with an explicit `color=black` base avoids that
++  // entirely and also composes cleanly with mixed-size boxes.
++  //
++  // Same local-file-only limitation as merge() above, same reason (no
++  // OpenSSL in this FFmpegKit build) — callers must download clips first.
++  fun exportGrid(clips: ReadableArray, options: ReadableMap?, promise: Promise) {
++    val outputExt = options?.getString("outputExt") ?: "mp4"
++    val outputFile = StorageUtil.getCacheOutputPath(reactApplicationContext, outputExt)
++    val canvasW = options?.getInt("canvasWidth") ?: 0
++    val canvasH = options?.getInt("canvasHeight") ?: 0
++    val targetDurationMs = options?.getDouble("targetDurationMs") ?: 0.0
++    val targetDurationSec = targetDurationMs / 1000.0
++
++    val n = clips.size()
++    if (n < 2 || canvasW <= 0 || canvasH <= 0 || targetDurationSec <= 0) {
++      promise.reject(Exception("exportGrid: need at least 2 clips and valid canvas/duration"))
++      return
++    }
++
++    val clipMaps = arrayOfNulls<ReadableMap>(n)
++    // Effective path per clip — starts as the original path, replaced with
++    // an extracted-segment temp file for any clip that specifies a trim range.
++    val effectivePaths = arrayOfNulls<String>(n)
++    val extractedFiles = mutableListOf<String>() // tracked separately for cleanup once done
++    for (i in 0 until n) {
++      val clip = clips.getMap(i)
++      val path = clip?.getString("path")
++      if (path.isNullOrEmpty()) {
++        promise.reject(Exception("exportGrid: clip $i missing path"))
++        return
++      }
++      clipMaps[i] = clip
++      effectivePaths[i] = path
++    }
++
++    // Recursively extracts any trimmed clips' sub-ranges to their own files
++    // before compositing. Same reasoning as the already-verified bookmarklet
++    // fix: combining -stream_loop with input-side -ss/-t on the SAME input
++    // either has no looping effect at all, or (seeking after -i instead)
++    // loops the WHOLE original clip and just starts playback at an offset —
++    // meaning a trimmed selection would eventually drift into showing
++    // content outside the chosen range once the target duration ran long
++    // enough. Extracting the sub-range to its own file first, then looping
++    // THAT file like any other input, is the only approach confirmed to
++    // actually repeat just the selected segment indefinitely.
++    fun extractNext(index: Int, onDone: () -> Unit) {
++      if (index >= n) { onDone(); return }
++      val clip = clipMaps[index]!!
++      val hasTrim = clip.hasKey("trimStartSec") && clip.hasKey("trimDurationSec")
++      if (!hasTrim) { extractNext(index + 1, onDone); return }
++      val trimStart = clip.getDouble("trimStartSec")
++      val trimDuration = clip.getDouble("trimDurationSec")
++      val extractedFile = StorageUtil.getCacheOutputPath(reactApplicationContext, "mp4")
++      val extractCmds = arrayOf(
++        "-ss", trimStart.toString(), "-t", trimDuration.toString(), "-i", effectivePaths[index]!!,
++        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-y", extractedFile
++      )
++      Log.d(TAG, "exportGrid trim-extract[$index] command: ${extractCmds.joinToString(" ")}")
++      FFmpegKit.executeWithArgumentsAsync(extractCmds, { session ->
++        if (ReturnCode.isSuccess(session.returnCode)) {
++          effectivePaths[index] = extractedFile
++          extractedFiles.add(extractedFile)
++          extractNext(index + 1, onDone)
++        } else {
++          val logs = session.allLogsAsString ?: ""
++          UiThreadUtil.runOnUiThread {
++            promise.reject(Exception("exportGrid: trim extraction failed for clip $index\n$logs"))
++          }
++        }
++      }, null, null)
++    }
++
++    extractNext(0) {
++      val inputArgs = mutableListOf<String>()
++      val filterParts = mutableListOf<String>()
++      filterParts.add("color=c=black:s=${canvasW}x${canvasH}:r=24[bg]")
++
++      for (i in 0 until n) {
++        val clip = clipMaps[i]!!
++        val needsLoop = clip.hasKey("needsLoop") && clip.getBoolean("needsLoop")
++        val w = clip.getInt("w")
++        val h = clip.getInt("h")
++        if (needsLoop) {
++          inputArgs.addAll(listOf("-stream_loop", "-1"))
++        }
++        inputArgs.addAll(listOf("-i", effectivePaths[i]!!))
++        // Aspect-preserving scale+pad for every clip, including a featured
++        // clip's bigger box — its box is sized to the leftover grid's own
++        // width at the source's natural 16:9 (computed in JS), so it's just
++        // an ordinary rectangle, not a distorted one; no special-casing needed.
++        filterParts.add(
++          "[$i:v]scale=$w:$h:force_original_aspect_ratio=decrease,pad=$w:$h:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24[v$i]"
++        )
++      }
++
++      var prevLabel = "bg"
++      for (i in 0 until n) {
++        val clip = clipMaps[i]!!
++        val x = clip.getInt("x")
++        val y = clip.getInt("y")
++        val outLabel = if (i == n - 1) "outv" else "t$i"
++        filterParts.add("[$prevLabel][v$i]overlay=$x:$y[$outLabel]")
++        prevLabel = outLabel
++      }
++
++      val filterComplex = filterParts.joinToString(";")
++
++      // Fixed, reasonable bitrate rather than probing every source clip's
++      // bitrate like merge() does — the output is a scaled-down composite
++      // (each clip is only a fraction of the canvas), so it doesn't need to
++      // match the highest source bitrate the way a straight merge/concat does.
++      val buildCommand: (VideoTrimmerUtil.EncoderConfig) -> Array<String> = { config ->
++        val cmds = mutableListOf<String>()
++        cmds.addAll(inputArgs)
++        cmds.addAll(listOf(
++          "-filter_complex", filterComplex,
++          "-map", "[outv]", "-an", "-t", targetDurationSec.toString(),
++        ))
++        cmds.addAll(config.args)
++        cmds.addAll(listOf("-y", outputFile))
++        cmds.toTypedArray()
++      }
++
++    val callbacks = VideoTrimmerUtil.TrimCallbacks(
++      onLog = { msg -> msg.getString("message")?.let { Log.d(TAG, "exportGrid: $it") } },
++      onStatistics = { /* not surfaced */ },
++      onProgress = { /* not surfaced */ },
++      onSuccess = {
++        var duration = 0.0
++        try {
++          val retriever = MediaMetadataRetriever()
++          retriever.setDataSource(outputFile)
++          duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toDoubleOrNull() ?: 0.0
++          retriever.release()
++        } catch (_: Exception) {
++        }
++        // Best-effort cleanup of the intermediate trim-extraction files —
++        // frees cache space; a failure here doesn't affect the result
++        // already written to outputFile.
++        for (f in extractedFiles) { try { File(f).delete() } catch (_: Exception) {} }
++        val result = Arguments.createMap()
++        result.putString("outputPath", outputFile)
++        result.putDouble("duration", duration)
++        promise.resolve(result)
++      },
++      onCancel = { promise.reject(Exception("Grid export was cancelled")) },
++      onError = { _, _, session ->
++        for (f in extractedFiles) { try { File(f).delete() } catch (_: Exception) {} }
++        val returnCode = session?.returnCode
++        val logs = session?.allLogsAsString ?: ""
++        promise.reject(Exception("Grid export failed: rc $returnCode\n$logs"))
++      },
++    )
++
++      VideoTrimmerUtil.executeWithEncoderFallback(
++        encoderConfigs = VideoTrimmerUtil.reEncodeEncoderConfigs("10M"),
++        buildCommand = buildCommand,
++        videoDurationMs = targetDurationMs.toInt(),
++        callbacks = callbacks,
++      )
++    }
++  }
++
+   // Mixes an external audio track (background music / voice-over) into a video.
+   // The video stream is copied unchanged (-c:v copy), so only the audio is
+   // re-encoded (to AAC). This keeps the operation fast, preserves video quality,
+diff --git a/node_modules/react-native-video-trim/android/src/newarch/VideoTrimModule.kt b/node_modules/react-native-video-trim/android/src/newarch/VideoTrimModule.kt
+index e510b79..39f3442 100644
+--- a/node_modules/react-native-video-trim/android/src/newarch/VideoTrimModule.kt
++++ b/node_modules/react-native-video-trim/android/src/newarch/VideoTrimModule.kt
+@@ -90,6 +90,10 @@ class VideoTrimModule(
+     base.merge(urls, options, promise)
+   }
+ 
++  override fun exportGrid(clips: ReadableArray, options: ReadableMap, promise: Promise) {
++    base.exportGrid(clips, options, promise)
++  }
++
+   override fun mixAudio(videoPath: String, audioPath: String, options: ReadableMap, promise: Promise) {
+     base.mixAudio(videoPath, audioPath, options, promise)
+   }
+diff --git a/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimModule.kt b/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimModule.kt
+index eefdb92..a73a9ac 100644
+--- a/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimModule.kt
++++ b/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimModule.kt
+@@ -95,6 +95,11 @@ class VideoTrimModule internal constructor(context: ReactApplicationContext) : V
+     base.merge(urls, options, promise)
+   }
+ 
++  @ReactMethod
++  override fun exportGrid(clips: ReadableArray, options: ReadableMap?, promise: Promise) {
++    base.exportGrid(clips, options, promise)
++  }
++
+   @ReactMethod
+   override fun mixAudio(videoPath: String, audioPath: String, options: ReadableMap?, promise: Promise) {
+     base.mixAudio(videoPath, audioPath, options, promise)
+diff --git a/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimSpec.kt b/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimSpec.kt
+index 8ac5568..66aa4af 100644
+--- a/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimSpec.kt
++++ b/node_modules/react-native-video-trim/android/src/oldarch/VideoTrimSpec.kt
+@@ -33,6 +33,8 @@ abstract class VideoTrimSpec internal constructor(context: ReactApplicationConte
+ 
+   abstract fun merge(urls: ReadableArray, options: ReadableMap?, promise: Promise)
+ 
++  abstract fun exportGrid(clips: ReadableArray, options: ReadableMap?, promise: Promise)
++
+   abstract fun mixAudio(videoPath: String, audioPath: String, options: ReadableMap?, promise: Promise)
+ 
+   abstract fun saveToPhoto(filePath: String, promise: Promise)
+diff --git a/node_modules/react-native-video-trim/lib/module/index.js b/node_modules/react-native-video-trim/lib/module/index.js
+index 66de340..0d89d19 100644
+--- a/node_modules/react-native-video-trim/lib/module/index.js
++++ b/node_modules/react-native-video-trim/lib/module/index.js
+@@ -63,6 +63,15 @@ function createMergeOptions(overrides = {}) {
+     ...overrides
+   };
+ }
++function createExportGridOptions(overrides = {}) {
++  return {
++    canvasWidth: 0,
++    canvasHeight: 0,
++    targetDurationMs: 0,
++    outputExt: 'mp4',
++    ...overrides
++  };
++}
+ function createMixAudioOptions(overrides = {}) {
+   return {
+     originalAudioVolume: 1.0,
+@@ -287,6 +296,22 @@ export function merge(urls, options = {}) {
+   return VideoTrim.merge(urls, createMergeOptions(options));
+ }
+ 
++/**
++ * Composite multiple clips into a single grid video (headless, no UI).
++ * All grid-layout math is expected to already be done by the caller — this
++ * just takes the final per-clip boxes and turns them into one FFmpeg command.
++ *
++ * @param {GridClipInput[]} clips: already-positioned clips, local file paths only
++ * @param {Partial<ExportGridOptions>} options: canvas size and target duration
++ * @returns {Promise<ExportGridResult>} A **Promise** which resolves to the result
++ */
++export function exportGrid(clips, options = {}) {
++  if (!clips || clips.length < 2) {
++    throw new Error('Need at least 2 clips!');
++  }
++  return VideoTrim.exportGrid(clips, createExportGridOptions(options));
++}
++
+ /**
+  * Mix (or replace) an external audio track, such as background music or a
+  * voice-over, into a video (headless, no UI). The video stream is copied
+diff --git a/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts b/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts
+index 9a61328..471efa0 100644
+--- a/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts
++++ b/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts
+@@ -286,6 +286,55 @@ export interface GifResult {
+     /** Absolute path to the generated GIF file. */
+     outputPath: string;
+ }
++/**
++ * A single clip's already-computed position within a grid export canvas.
++ * All grid-layout math happens in JS — this is just the final per-clip box
++ * the native side turns into an FFmpeg overlay.
++ */
++export interface GridClipInput {
++    /** Absolute local file path — remote URLs are not supported (see exportGrid). */
++    path: string;
++    /** Loop this clip (`-stream_loop -1`) to fill the target duration. */
++    needsLoop: boolean;
++    /**
++     * Optional trim range, in seconds, applied before compositing — the
++     * sub-range is extracted to its own file first, then looped if
++     * needsLoop is also set (combining a loop with input-side seeking on
++     * the same source doesn't repeat just the selected segment).
++     */
++    trimStartSec?: number;
++    trimDurationSec?: number;
++    /** Left edge of this clip's box, in pixels, within the output canvas. */
++    x: number;
++    /** Top edge of this clip's box, in pixels, within the output canvas. */
++    y: number;
++    /** Width of this clip's box, in pixels. */
++    w: number;
++    /** Height of this clip's box, in pixels. */
++    h: number;
++}
++/**
++ * Options for {@link Spec.exportGrid}.
++ */
++export interface ExportGridOptions {
++    /** Output canvas width in pixels. */
++    canvasWidth: number;
++    /** Output canvas height in pixels. */
++    canvasHeight: number;
++    /** Output duration in milliseconds. */
++    targetDurationMs: number;
++    /** Output file extension. Default `"mp4"`. */
++    outputExt: string;
++}
++/**
++ * Result returned by {@link Spec.exportGrid}.
++ */
++export interface ExportGridResult {
++    /** Absolute path to the generated grid video. */
++    outputPath: string;
++    /** Duration of the output video in milliseconds. */
++    duration: number;
++}
+ /**
+  * Options for merging multiple media files into one.
+  */
+@@ -388,6 +437,7 @@ export interface Spec extends TurboModule {
+     toGif(url: string, options: GifOptions): Promise<GifResult>;
+     /** Merge multiple media files into a single file. Headless only, no editor UI. */
+     merge(urls: ReadonlyArray<string>, options: MergeOptions): Promise<MergeResult>;
++    exportGrid(clips: ReadonlyArray<GridClipInput>, options: ExportGridOptions): Promise<ExportGridResult>;
+     /**
+      * Mix (or replace) an external audio track into a video. Headless only, no
+      * editor UI. The video stream is copied unchanged; only audio is re-encoded.
+diff --git a/node_modules/react-native-video-trim/lib/typescript/src/index.d.ts b/node_modules/react-native-video-trim/lib/typescript/src/index.d.ts
+index ede1116..3bf3bc0 100644
+--- a/node_modules/react-native-video-trim/lib/typescript/src/index.d.ts
++++ b/node_modules/react-native-video-trim/lib/typescript/src/index.d.ts
+@@ -1,4 +1,4 @@
+-import type { CompressOptions, CompressResult, EditorConfig, ExtractAudioOptions, ExtractAudioResult, FileValidationResult, FrameExtractionOptions, FrameResult, GifOptions, GifResult, MergeOptions, MergeResult, MixAudioOptions, MixAudioResult, SaveToDocumentsResult, SaveToPhotoResult, ShareResult, TrimOptions, TrimResult } from './NativeVideoTrim';
++import type { CompressOptions, CompressResult, EditorConfig, ExportGridOptions, ExportGridResult, ExtractAudioOptions, ExtractAudioResult, FileValidationResult, FrameExtractionOptions, FrameResult, GifOptions, GifResult, GridClipInput, MergeOptions, MergeResult, MixAudioOptions, MixAudioResult, SaveToDocumentsResult, SaveToPhotoResult, ShareResult, TrimOptions, TrimResult } from './NativeVideoTrim';
+ declare const VideoTrim: any;
+ /**
+  * Show video editor
+@@ -93,6 +93,14 @@ export declare function toGif(url: string, options?: Partial<GifOptions>): Promi
+  * @returns {Promise<MergeResult>} A **Promise** which resolves to the result
+  */
+ export declare function merge(urls: string[], options?: Partial<MergeOptions>): Promise<MergeResult>;
++/**
++ * Composite multiple clips into a single grid video (headless, no UI).
++ *
++ * @param {GridClipInput[]} clips: already-positioned clips, local file paths only
++ * @param {Partial<ExportGridOptions>} options: canvas size and target duration
++ * @returns {Promise<ExportGridResult>} A **Promise** which resolves to the result
++ */
++export declare function exportGrid(clips: GridClipInput[], options?: Partial<ExportGridOptions>): Promise<ExportGridResult>;
+ /**
+  * Mix (or replace) an external audio track, such as background music or a
+  * voice-over, into a video (headless, no UI). The video stream is copied
+diff --git a/node_modules/react-native-video-trim/src/NativeVideoTrim.ts b/node_modules/react-native-video-trim/src/NativeVideoTrim.ts
+index 23fb693..5b5b2db 100644
+--- a/node_modules/react-native-video-trim/src/NativeVideoTrim.ts
++++ b/node_modules/react-native-video-trim/src/NativeVideoTrim.ts
+@@ -319,6 +319,61 @@ export interface MergeResult {
+   duration: number;
+ }
+ 
++/**
++ * A single clip's already-computed position within a grid export canvas.
++ * All grid-layout math (orientation, centering a short row, or sizing a
++ * featured clip above a smaller grid) happens in JS — this is just the
++ * final per-clip box the native side turns into an FFmpeg overlay.
++ */
++export interface GridClipInput {
++  /** Absolute local file path — remote URLs are not supported (see exportGrid). */
++  path: string;
++  /** Loop this clip (`-stream_loop -1`) to fill the target duration — set when this clip is shorter than the longest clip in the export. */
++  needsLoop: boolean;
++  /**
++   * Optional trim range, in seconds, applied before compositing. When set,
++   * the clip's sub-range [trimStartSec, trimStartSec + trimDurationSec) is
++   * extracted to its own file first, THEN looped if needsLoop is also set —
++   * combining a loop with input-side seeking on the same source doesn't
++   * repeat just the selected segment (confirmed directly against real
++   * ffmpeg), so this two-step approach is required, not optional internally.
++   */
++  trimStartSec?: number;
++  trimDurationSec?: number;
++  /** Left edge of this clip's box, in pixels, within the output canvas. */
++  x: number;
++  /** Top edge of this clip's box, in pixels, within the output canvas. */
++  y: number;
++  /** Width of this clip's box, in pixels. */
++  w: number;
++  /** Height of this clip's box, in pixels. */
++  h: number;
++}
++
++/**
++ * Options for {@link Spec.exportGrid}.
++ */
++export interface ExportGridOptions {
++  /** Output canvas width in pixels — the maximum right edge across all clip boxes. */
++  canvasWidth: number;
++  /** Output canvas height in pixels — the maximum bottom edge across all clip boxes. */
++  canvasHeight: number;
++  /** Output duration in milliseconds — the longest clip's own duration; shorter clips loop (see {@link GridClipInput.needsLoop}) to fill it. */
++  targetDurationMs: number;
++  /** Output file extension. Default `"mp4"`. */
++  outputExt: string;
++}
++
++/**
++ * Result returned by {@link Spec.exportGrid}.
++ */
++export interface ExportGridResult {
++  /** Absolute path to the generated grid video. */
++  outputPath: string;
++  /** Duration of the output video in milliseconds. */
++  duration: number;
++}
++
+ /**
+  * Options for mixing an external audio track (background music / voice-over)
+  * into a video.
+@@ -419,6 +474,16 @@ export interface Spec extends TurboModule {
+     urls: ReadonlyArray<string>,
+     options: MergeOptions
+   ): Promise<MergeResult>;
++  /**
++   * Composite multiple clips into a single grid video from already-computed
++   * per-clip boxes (see {@link GridClipInput}) — no grid-layout math happens
++   * natively. Local file paths only (see {@link GridClipInput.path}).
++   * Headless only, no editor UI.
++   */
++  exportGrid(
++    clips: ReadonlyArray<GridClipInput>,
++    options: ExportGridOptions
++  ): Promise<ExportGridResult>;
+   /**
+    * Mix (or replace) an external audio track into a video. Headless only, no
+    * editor UI. The video stream is copied unchanged; only audio is re-encoded.
+diff --git a/node_modules/react-native-video-trim/src/index.tsx b/node_modules/react-native-video-trim/src/index.tsx
+index eefad41..c1e89c1 100644
+--- a/node_modules/react-native-video-trim/src/index.tsx
++++ b/node_modules/react-native-video-trim/src/index.tsx
+@@ -5,6 +5,8 @@ import type {
+   CompressOptions,
+   CompressResult,
+   EditorConfig,
++  ExportGridOptions,
++  ExportGridResult,
+   ExtractAudioOptions,
+   ExtractAudioResult,
+   FileValidationResult,
+@@ -12,6 +14,7 @@ import type {
+   FrameResult,
+   GifOptions,
+   GifResult,
++  GridClipInput,
+   MergeOptions,
+   MergeResult,
+   MixAudioOptions,
+@@ -98,6 +101,18 @@ function createMergeOptions(
+   };
+ }
+ 
++function createExportGridOptions(
++  overrides: Partial<ExportGridOptions> = {}
++): ExportGridOptions {
++  return {
++    canvasWidth: 0,
++    canvasHeight: 0,
++    targetDurationMs: 0,
++    outputExt: 'mp4',
++    ...overrides,
++  };
++}
++
+ function createMixAudioOptions(
+   overrides: Partial<MixAudioOptions> = {}
+ ): MixAudioOptions {
+@@ -375,6 +390,26 @@ export function merge(
+   return VideoTrim.merge(urls, createMergeOptions(options));
+ }
+ 
++/**
++ * Composite multiple clips into a single grid video (headless, no UI).
++ * All grid-layout math (orientation, centering, or featuring one clip above
++ * a smaller grid) is expected to already be done by the caller — this just
++ * takes the final per-clip boxes and turns them into one FFmpeg command.
++ *
++ * @param {GridClipInput[]} clips: already-positioned clips, local file paths only
++ * @param {Partial<ExportGridOptions>} options: canvas size and target duration
++ * @returns {Promise<ExportGridResult>} A **Promise** which resolves to the result
++ */
++export function exportGrid(
++  clips: GridClipInput[],
++  options: Partial<ExportGridOptions> = {}
++): Promise<ExportGridResult> {
++  if (!clips || clips.length < 2) {
++    throw new Error('Need at least 2 clips!');
++  }
++  return VideoTrim.exportGrid(clips, createExportGridOptions(options));
++}
++
+ /**
+  * Mix (or replace) an external audio track, such as background music or a
+  * voice-over, into a video (headless, no UI). The video stream is copied
