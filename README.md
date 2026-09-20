@@ -1,6 +1,6 @@
 # Sakuga Enhancer
 
-A native Android/iOS app for browsing [sakugabooru.com](https://www.sakugabooru.com) — search, animator stats, a show/episode browser, frame-accurate video trimming, commenting, voting, and pools.
+A native Android app for browsing [sakugabooru.com](https://www.sakugabooru.com) — search, animator stats, a show/episode browser, frame-accurate video trimming, commenting, voting, and pools.
 
 Built with React Native + Expo, powered entirely by sakugabooru's own public API.
 
