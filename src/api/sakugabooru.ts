@@ -177,12 +177,25 @@ export function ensureAllTags(onProgress?: (n: number) => void): Promise<Tag[]> 
 /** Client-side substring search against the full tag dictionary, since the
  * server's own `name_pattern` doesn't work. Optionally restrict to a tag type
  * (3 = show/copyright tags, useful for the Shows search). */
+// Real tag names on this booru always write a colon-subtitle boundary as
+// ":_" (space becomes underscore just like everywhere else) — e.g.
+// "re:_zero_kara_hajimeru...". Typing "re: zero" (a literal space after the
+// colon) happens to reconstruct that exact ":_" sequence and matches fine,
+// while "re:zero" (no space) doesn't — an arbitrary, non-obvious
+// requirement to type a space there. Collapsing ":_" to ":" on both sides
+// of the comparison makes the colon match regardless of whether that
+// incidental space was typed. (Same fix already shipped in the bookmarklet
+// version of this search.)
+function normalizeForTagMatch(s: string): string {
+  return (s || '').replace(/:_/g, ':');
+}
+
 export async function searchTags(query: string, type?: number, limit = 15): Promise<Tag[]> {
-  const norm = query.trim().toLowerCase().replace(/\s+/g, '_');
+  const norm = normalizeForTagMatch(query.trim().toLowerCase().replace(/\s+/g, '_'));
   const all = await ensureAllTags();
   const matchesType = (t: Tag) => type === undefined || t.type === type;
 
-  let direct = all.filter((t) => matchesType(t) && t.name.includes(norm));
+  let direct = all.filter((t) => matchesType(t) && normalizeForTagMatch(t.name).includes(norm));
   if (direct.length === 0) {
     // Multi-word query rarely matches one contiguous tag name — try each word.
     const words = norm.split('_').filter((w) => w.length >= 3);
@@ -190,7 +203,7 @@ export async function searchTags(query: string, type?: number, limit = 15): Prom
     direct = [];
     for (const w of words) {
       for (const t of all) {
-        if (matchesType(t) && t.name.includes(w) && !seen.has(t.name)) {
+        if (matchesType(t) && normalizeForTagMatch(t.name).includes(w) && !seen.has(t.name)) {
           seen.add(t.name);
           direct.push(t);
         }

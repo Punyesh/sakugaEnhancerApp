@@ -25,6 +25,10 @@ import {
   MAX_GRID_CLIPS,
   GridOrientation,
   GridMode,
+  GridFormat,
+  LoopMode,
+  LabelMode,
+  LabelStyle,
   TrimRange,
 } from '../api/gridExport';
 import { onGridRangePicked } from '../api/gridTrimEvents';
@@ -105,9 +109,14 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
 
   // ---------- grid export ----------
   const [exportModalVisible, setExportModalVisible] = useState(false);
+  const [exportFormat, setExportFormat] = useState<GridFormat>('grid');
   const [exportOrientation, setExportOrientation] = useState<GridOrientation>('landscape');
   const [customGrid, setCustomGrid] = useState(false);
   const [exportMode, setExportMode] = useState<GridMode>('center');
+  const [exportLoopMode, setExportLoopMode] = useState<LoopMode>('replay');
+  const [exportLabelMode, setExportLabelMode] = useState<LabelMode>('off');
+  const [exportLabelStyle, setExportLabelStyle] = useState<LabelStyle>('outline');
+  const [exportLabelOverrides, setExportLabelOverrides] = useState<Record<number, string>>({});
   const [exportClipOrder, setExportClipOrder] = useState<Post[]>([]);
   const [advancedOptions, setAdvancedOptions] = useState(false);
   const [exportTrims, setExportTrims] = useState<Record<number, TrimRange>>({});
@@ -191,13 +200,18 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
   const openExportModal = useCallback(() => {
     const videoPosts = (pool?.posts || []).filter((p) => isVideoFile(p.file_url));
     if (videoPosts.length < 2) {
-      Alert.alert('Not enough clips', 'Need at least 2 video clips in this pool to export a grid.');
+      Alert.alert('Not enough clips', 'Need at least 2 video clips in this pool to export.');
       return;
     }
     setExportClipOrder(videoPosts.slice(0, MAX_GRID_CLIPS));
+    setExportFormat('grid');
     setExportOrientation('landscape');
     setCustomGrid(false);
     setExportMode('center');
+    setExportLoopMode('replay');
+    setExportLabelMode('off');
+    setExportLabelStyle('outline');
+    setExportLabelOverrides({});
     setAdvancedOptions(false);
     setExportTrims({});
     setTrimInputs({});
@@ -220,6 +234,18 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
     if (!on) {
       setExportTrims({});
       setTrimInputs({});
+      setExportLoopMode('replay');
+      setExportLabelMode('off');
+      setExportLabelStyle('outline');
+      setExportLabelOverrides({});
+    }
+  }, []);
+
+  const toggleLabels = useCallback((on: boolean) => {
+    setExportLabelMode(on ? 'left' : 'off');
+    if (!on) {
+      setExportLabelStyle('outline');
+      setExportLabelOverrides({});
     }
   }, []);
 
@@ -275,16 +301,37 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
     });
   }, []);
 
+  const changeExportFormat = useCallback((format: GridFormat) => {
+    setExportFormat(format);
+    if (format === 'serial') {
+      // Stretch/featured-clip only makes sense when there's a grid to
+      // feature above — reset back to its own default so it isn't left in
+      // a stale state if the person switches back to Grid format later.
+      setExportMode('center');
+    }
+  }, []);
+
   const preview = useMemo(
-    () => previewGridLayout(exportClipOrder.length, exportOrientation, exportMode),
-    [exportClipOrder.length, exportOrientation, exportMode]
+    () => previewGridLayout(exportClipOrder.length, exportOrientation, exportMode, exportFormat),
+    [exportClipOrder.length, exportOrientation, exportMode, exportFormat]
   );
 
   const startExport = useCallback(async () => {
     setExporting(true);
     setExportResult(null);
     try {
-      const result = await exportPoolAsGrid(exportClipOrder, exportOrientation, exportMode, exportTrims, setExportStatus);
+      const result = await exportPoolAsGrid(
+        exportClipOrder,
+        exportOrientation,
+        exportMode,
+        exportTrims,
+        setExportStatus,
+        exportFormat,
+        exportLoopMode,
+        exportLabelMode,
+        exportLabelStyle,
+        exportLabelOverrides
+      );
       setExportResult({ uri: result.uri, filename: result.filename });
       setExportStatus(`done in ${result.seconds.toFixed(1)}s`);
     } catch (e: any) {
@@ -293,7 +340,17 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
     } finally {
       setExporting(false);
     }
-  }, [exportClipOrder, exportOrientation, exportMode, exportTrims]);
+  }, [
+    exportClipOrder,
+    exportOrientation,
+    exportMode,
+    exportTrims,
+    exportFormat,
+    exportLoopMode,
+    exportLabelMode,
+    exportLabelStyle,
+    exportLabelOverrides,
+  ]);
 
   return (
     <View style={styles.container}>
@@ -311,7 +368,7 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
             </Text>
             <TouchableOpacity onPress={openExportModal} style={styles.exportBtn}>
               <Ionicons name="grid-outline" size={14} color={colors.amber} />
-              <Text style={styles.exportBtnText}>Export as Grid</Text>
+              <Text style={styles.exportBtnText}>Export Clips</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={doDeletePool} style={styles.deleteBtn}>
               <Ionicons name="trash-outline" size={16} color={colors.red} />
@@ -369,7 +426,23 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
         <View style={modalStyles.backdrop}>
           <View style={modalStyles.sheet}>
             <ScrollView contentContainerStyle={{ paddingBottom: 8 + insets.bottom }}>
-              <Text style={modalStyles.title}>Export as Grid Video</Text>
+              <Text style={modalStyles.title}>Export Clips</Text>
+
+              <Text style={modalStyles.label}>Format</Text>
+              <View style={modalStyles.toggleRow}>
+                <TouchableOpacity
+                  style={[modalStyles.toggleBtn, exportFormat === 'grid' && modalStyles.toggleBtnActive]}
+                  onPress={() => changeExportFormat('grid')}
+                >
+                  <Text style={[modalStyles.toggleText, exportFormat === 'grid' && modalStyles.toggleTextActive]}>Grid</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[modalStyles.toggleBtn, exportFormat === 'serial' && modalStyles.toggleBtnActive]}
+                  onPress={() => changeExportFormat('serial')}
+                >
+                  <Text style={[modalStyles.toggleText, exportFormat === 'serial' && modalStyles.toggleTextActive]}>Serial</Text>
+                </TouchableOpacity>
+              </View>
 
               <Text style={modalStyles.label}>Orientation</Text>
               <View style={modalStyles.toggleRow}>
@@ -397,7 +470,7 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
                   size={18}
                   color={customGrid ? colors.amber : colors.dim}
                 />
-                <Text style={modalStyles.checkboxLabel}>Custom grid</Text>
+                <Text style={modalStyles.checkboxLabel}>{exportFormat === 'serial' ? 'Custom order' : 'Custom grid'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={modalStyles.checkboxRow} onPress={() => toggleAdvancedOptions(!advancedOptions)}>
                 <Ionicons
@@ -408,7 +481,7 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
                 <Text style={modalStyles.checkboxLabel}>Advanced options</Text>
               </TouchableOpacity>
 
-              {customGrid && (
+              {customGrid && exportFormat === 'grid' && (
                 <>
                   <Text style={modalStyles.label}>Mode</Text>
                   <View style={modalStyles.toggleRow}>
@@ -438,11 +511,90 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
                 </Text>
               )}
 
+              {advancedOptions && exportFormat === 'grid' && (
+                <>
+                  <Text style={modalStyles.label}>Shorter clips than the target length</Text>
+                  <View style={modalStyles.toggleRow}>
+                    <TouchableOpacity
+                      style={[modalStyles.toggleBtn, exportLoopMode === 'replay' && modalStyles.toggleBtnActive]}
+                      onPress={() => setExportLoopMode('replay')}
+                    >
+                      <Text style={[modalStyles.toggleText, exportLoopMode === 'replay' && modalStyles.toggleTextActive]}>
+                        Replay
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[modalStyles.toggleBtn, exportLoopMode === 'stop' && modalStyles.toggleBtnActive]}
+                      onPress={() => setExportLoopMode('stop')}
+                    >
+                      <Text style={[modalStyles.toggleText, exportLoopMode === 'stop' && modalStyles.toggleTextActive]}>
+                        Stop
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {advancedOptions && (
+                <>
+                  <TouchableOpacity style={modalStyles.checkboxRow} onPress={() => toggleLabels(exportLabelMode === 'off')}>
+                    <Ionicons
+                      name={exportLabelMode !== 'off' ? 'checkbox' : 'square-outline'}
+                      size={18}
+                      color={exportLabelMode !== 'off' ? colors.amber : colors.dim}
+                    />
+                    <Text style={modalStyles.checkboxLabel}>Show animator name(s) on each clip</Text>
+                  </TouchableOpacity>
+                  {exportLabelMode !== 'off' && (
+                    <>
+                      <View style={modalStyles.toggleRow}>
+                        <TouchableOpacity
+                          style={[modalStyles.toggleBtn, exportLabelMode === 'left' && modalStyles.toggleBtnActive]}
+                          onPress={() => setExportLabelMode('left')}
+                        >
+                          <Text style={[modalStyles.toggleText, exportLabelMode === 'left' && modalStyles.toggleTextActive]}>
+                            Bottom Left
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[modalStyles.toggleBtn, exportLabelMode === 'right' && modalStyles.toggleBtnActive]}
+                          onPress={() => setExportLabelMode('right')}
+                        >
+                          <Text style={[modalStyles.toggleText, exportLabelMode === 'right' && modalStyles.toggleTextActive]}>
+                            Bottom Right
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={modalStyles.toggleRow}>
+                        <TouchableOpacity
+                          style={[modalStyles.toggleBtn, exportLabelStyle === 'outline' && modalStyles.toggleBtnActive]}
+                          onPress={() => setExportLabelStyle('outline')}
+                        >
+                          <Text style={[modalStyles.toggleText, exportLabelStyle === 'outline' && modalStyles.toggleTextActive]}>
+                            Outline
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[modalStyles.toggleBtn, exportLabelStyle === 'box' && modalStyles.toggleBtnActive]}
+                          onPress={() => setExportLabelStyle('box')}
+                        >
+                          <Text style={[modalStyles.toggleText, exportLabelStyle === 'box' && modalStyles.toggleTextActive]}>
+                            Box
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )}
+                </>
+              )}
+
               {(customGrid || advancedOptions) && (
                 <>
                   <Text style={modalStyles.label}>
                     {customGrid
-                      ? 'Order — first clip is featured above the rest if that mode is on:'
+                      ? exportFormat === 'serial'
+                        ? 'Order — clips play in this order, one after another:'
+                        : 'Order — first clip is featured above the rest if that mode is on:'
                       : 'Per-clip trim range:'}
                   </Text>
                   {exportClipOrder.map((p, i) => {
@@ -500,6 +652,22 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
                               />
                             </TouchableOpacity>
                           </>
+                        )}
+                        {exportLabelMode !== 'off' && (
+                          <TextInput
+                            style={modalStyles.labelOverrideInput}
+                            placeholder="custom label text (replaces staff names)"
+                            placeholderTextColor={colors.dim}
+                            value={exportLabelOverrides[p.id] || ''}
+                            onChangeText={(v) =>
+                              setExportLabelOverrides((prev) => {
+                                const next = { ...prev };
+                                if (v.trim()) next[p.id] = v;
+                                else delete next[p.id];
+                                return next;
+                              })
+                            }
+                          />
                         )}
                       </View>
                     );
@@ -573,7 +741,7 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
                       onPress={async () => {
                         try {
                           await saveToGallery(exportResult.uri);
-                          Alert.alert('Saved', 'Grid video saved to your gallery.');
+                          Alert.alert('Saved', 'Video saved to your gallery.');
                         } catch (e: any) {
                           Alert.alert('Save failed', e?.message || 'unknown error');
                         }
@@ -610,7 +778,7 @@ export default function LocalPoolDetailScreen({ route, navigation }: any) {
                         onPress={async () => {
                           try {
                             await saveToGallery(trimmedResult.uri);
-                            Alert.alert('Saved', 'Trimmed grid video saved to your gallery.');
+                            Alert.alert('Saved', 'Trimmed video saved to your gallery.');
                           } catch (e: any) {
                             Alert.alert('Save failed', e?.message || 'unknown error');
                           }
@@ -706,6 +874,17 @@ const modalStyles = StyleSheet.create({
     paddingVertical: 2,
   },
   trimDash: { color: colors.dim, fontSize: 11 },
+  labelOverrideInput: {
+    flexBasis: '100%',
+    fontSize: 11,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginTop: 4,
+  },
   toggleRow: { flexDirection: 'row', gap: 8 },
   toggleBtn: { flex: 1, borderWidth: 1, borderColor: colors.line, borderRadius: 6, paddingVertical: 8, alignItems: 'center' },
   toggleBtnActive: { borderColor: colors.amber, backgroundColor: colors.panel2 },

@@ -1,8 +1,23 @@
 diff --git a/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt b/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
-index cc9ba6a..052a106 100644
+index cc9ba6a..40f6c31 100644
 --- a/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
 +++ b/node_modules/react-native-video-trim/android/src/main/java/com/videotrim/BaseVideoTrimModule.kt
-@@ -1128,6 +1128,200 @@ open class BaseVideoTrimModule internal constructor(
+@@ -11,10 +11,14 @@ import android.content.Intent
+ import android.content.pm.PackageManager
+ import android.content.res.ColorStateList
+ import android.graphics.Bitmap
++import android.graphics.Canvas
+ import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.Typeface
+ import android.media.MediaMetadataRetriever
+ import android.net.Uri
+ import android.os.Build
++import android.text.TextPaint
+ import android.util.Log
+ import android.util.TypedValue
+ import android.view.Gravity
+@@ -1128,6 +1132,403 @@ open class BaseVideoTrimModule internal constructor(
      )
    }
  
@@ -23,6 +38,105 @@ index cc9ba6a..052a106 100644
 +  //
 +  // Same local-file-only limitation as merge() above, same reason (no
 +  // OpenSSL in this FFmpegKit build) — callers must download clips first.
++  // Renders a small transparent PNG containing wrapped, capped label text
++  // for one grid cell, using Android's own TextPaint/Canvas — the same
++  // rendering engine every view in the OS draws text with — instead of
++  // ffmpeg's drawtext filter, which needs libfreetype (only bundled in
++  // FFmpegKit's "video"/"full" package variants, not the "min" variant this
++  // app uses, which would mean a meaningfully bigger APK just for this one
++  // feature). The PNG becomes an ordinary extra ffmpeg input, composited
++  // onto its clip via `overlay` — a core filter already used for the grid
++  // itself, present in every FFmpegKit variant.
++  //
++  // Wrapping is a manual greedy token-packing loop — the same algorithm
++  // already verified in the bookmarklet's browser version — measuring each
++  // candidate with TextPaint.measureText() and breaking only BETWEEN
++  // tokens (whole animator names, or whole words for custom text), never
++  // within one. Because this measures with the exact engine that renders
++  // the final bitmap, there's no cross-renderer metrics gap to compensate
++  // for the way the bookmarklet needed (confirmed there that Canvas vs.
++  // freetype could disagree by a wide margin) — here the same TextPaint
++  // object does both jobs, so no safety-margin percentage is needed either.
++  private fun renderLabelBitmap(
++    tokens: List<String>,
++    joiner: String,
++    cellW: Int,
++    cellH: Int,
++    position: String, // "left" | "right"
++    style: String // "outline" | "box"
++  ): Bitmap {
++    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
++      color = Color.WHITE
++      typeface = Typeface.DEFAULT_BOLD
++    }
++    val marginPx = 10f
++    val maxLineWidth = cellW - 2 * marginPx
++    val maxLines = 4
++
++    fun wrapAt(size: Float): List<String> {
++      paint.textSize = size
++      val lines = mutableListOf<String>()
++      var current = ""
++      for (tok in tokens) {
++        val candidate = if (current.isEmpty()) tok else current + joiner + tok
++        if (current.isEmpty() || paint.measureText(candidate) <= maxLineWidth) {
++          current = candidate
++        } else {
++          lines.add(current)
++          current = tok
++        }
++      }
++      if (current.isNotEmpty()) lines.add(current)
++      return lines
++    }
++
++    // Divisor/clamp chosen against this tool's actual cell sizes (270 for a
++    // normal cell, up to 540 for a doubled 'stretch' featured box or a
++    // serial-mode frame) — same numbers already verified in the bookmarklet
++    // to actually differentiate between them (18 vs 32), rather than both
++    // landing on one clamped ceiling the way an earlier, narrower range did.
++    var fontSize = (cellH / 15f).coerceIn(14f, 32f)
++    var lines = wrapAt(fontSize)
++    while (lines.size > maxLines && fontSize > 12f) {
++      fontSize -= 1f
++      lines = wrapAt(fontSize)
++    }
++
++    val bitmap = Bitmap.createBitmap(cellW, cellH, Bitmap.Config.ARGB_8888)
++    val canvas = Canvas(bitmap) // starts fully transparent — nothing drawn shows through as-is
++
++    val lineHeight = paint.fontSpacing
++    val totalTextHeight = lineHeight * lines.size
++    var y = cellH - marginPx - totalTextHeight - paint.ascent()
++
++    val boxPaint = Paint().apply { color = Color.argb(128, 0, 0, 0) }
++    val strokePaint = TextPaint(paint).apply {
++      style = Paint.Style.STROKE
++      strokeWidth = fontSize * 0.11f
++      color = Color.BLACK
++    }
++
++    for (line in lines) {
++      val textWidth = paint.measureText(line)
++      val x = if (position == "right") cellW - marginPx - textWidth else marginPx
++      if (style == "box") {
++        canvas.drawRect(x - 6, y + paint.ascent() - 4, x + textWidth + 6, y + paint.descent() + 4, boxPaint)
++      } else {
++        canvas.drawText(line, x, y, strokePaint)
++      }
++      canvas.drawText(line, x, y, paint)
++      y += lineHeight
++    }
++    return bitmap
++  }
++
++  private fun saveLabelBitmap(bitmap: Bitmap): String {
++    val file = File(reactApplicationContext.cacheDir, "sk_label_${System.nanoTime()}.png")
++    FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out) }
++    bitmap.recycle()
++    return file.absolutePath
++  }
++
 +  fun exportGrid(clips: ReadableArray, options: ReadableMap?, promise: Promise) {
 +    val outputExt = options?.getString("outputExt") ?: "mp4"
 +    val outputFile = StorageUtil.getCacheOutputPath(reactApplicationContext, outputExt)
@@ -30,6 +144,12 @@ index cc9ba6a..052a106 100644
 +    val canvasH = options?.getInt("canvasHeight") ?: 0
 +    val targetDurationMs = options?.getDouble("targetDurationMs") ?: 0.0
 +    val targetDurationSec = targetDurationMs / 1000.0
++    // "grid" (default) composites every clip into one shared frame at once;
++    // "serial" concatenates them one after another in time instead — same
++    // per-clip scale+pad+trim+loop pipeline either way, just a different
++    // final assembly step (overlay chain vs. a single concat filter).
++    val format = options?.getString("format") ?: "grid"
++    val isSerial = format == "serial"
 +
 +    val n = clips.size()
 +    if (n < 2 || canvasW <= 0 || canvasH <= 0 || targetDurationSec <= 0) {
@@ -112,37 +232,115 @@ index cc9ba6a..052a106 100644
 +    extractNext(0) {
 +      val inputArgs = mutableListOf<String>()
 +      val filterParts = mutableListOf<String>()
-+      filterParts.add("color=c=black:s=${canvasW}x${canvasH}:r=24[bg]")
++      // Explicit black background, then chained `overlay` filters instead
++      // of `xstack` for grid mode — confirmed directly (against real
++      // ffmpeg, in the bookmarklet version of this feature) that xstack
++      // leaves any canvas area no input covers as uninitialized memory
++      // rather than actually black, which rendered as bright green in
++      // exactly the gaps a "center leftover row" layout produces. Serial
++      // mode needs none of this — concat has no gaps to cover, every clip
++      // fills the one shared frame completely in its own turn.
++      if (!isSerial) {
++        filterParts.add("color=c=black:s=${canvasW}x${canvasH}:r=24[bg]")
++      }
 +
 +      for (i in 0 until n) {
 +        val clip = clipMaps[i]!!
 +        val needsLoop = clip.hasKey("needsLoop") && clip.getBoolean("needsLoop")
 +        val w = clip.getInt("w")
 +        val h = clip.getInt("h")
-+        if (needsLoop) {
++        // stopExtendSec present means "freeze on the last frame instead of
++        // looping" for this clip — set by the JS side only when needsLoop
++        // was true AND the person chose Stop mode. Same tpad approach
++        // already verified in the bookmarklet version: combining
++        // -stream_loop with input-side seeking on the same source doesn't
++        // repeat just the clip's own content — either it has no looping
++        // effect, or it loops the WHOLE original and just starts playback
++        // at an offset. tpad's clone mode genuinely holds the last frame.
++        // (Serial mode never sets needsLoop in the first place — every clip
++        // in a sequence just plays through once for its own length.)
++        val stopExtendSec = if (clip.hasKey("stopExtendSec")) clip.getDouble("stopExtendSec") else null
++        if (needsLoop && stopExtendSec == null) {
 +          inputArgs.addAll(listOf("-stream_loop", "-1"))
 +        }
 +        inputArgs.addAll(listOf("-i", effectivePaths[i]!!))
 +        // Aspect-preserving scale+pad for every clip, including a featured
-+        // clip's bigger box — its box is sized to the leftover grid's own
-+        // width at the source's natural 16:9 (computed in JS), so it's just
-+        // an ordinary rectangle, not a distorted one; no special-casing needed.
-+        filterParts.add(
-+          "[$i:v]scale=$w:$h:force_original_aspect_ratio=decrease,pad=$w:$h:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24[v$i]"
-+        )
++        // clip's bigger box or serial mode's single shared frame — sized to
++        // the source's own natural aspect ratio (computed in JS), so it's
++        // just an ordinary rectangle, not a distorted one; no
++        // special-casing needed.
++        var chain = "[$i:v]scale=$w:$h:force_original_aspect_ratio=decrease,pad=$w:$h:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=24"
++        if (stopExtendSec != null) {
++          chain += ",tpad=stop_mode=clone:stop_duration=${"%.2f".format(stopExtendSec)}"
++        }
++        filterParts.add("$chain[v$i]")
 +      }
 +
-+      var prevLabel = "bg"
++      // Only this clip's own animator tags (or a person's own custom
++      // override) get rendered here — bitmaps are generated up front,
++      // synchronously, since this is plain Android drawing, not an ffmpeg
++      // pass — then composited via a plain `overlay`, same as the grid
++      // itself. finalVideoLabels tracks which label ([v$i] or the
++      // label-overlaid [v${i}l]) each clip should actually contribute
++      // below, so unlabeled clips are completely unaffected.
++      val finalVideoLabels = Array(n) { "v$it" }
++      val labelPngPaths = mutableListOf<String>()
++      var nextInputIndex = n
 +      for (i in 0 until n) {
 +        val clip = clipMaps[i]!!
-+        val x = clip.getInt("x")
-+        val y = clip.getInt("y")
-+        val outLabel = if (i == n - 1) "outv" else "t$i"
-+        filterParts.add("[$prevLabel][v$i]overlay=$x:$y[$outLabel]")
-+        prevLabel = outLabel
++        val tokensArray = if (clip.hasKey("labelTokens")) clip.getArray("labelTokens") else null
++        val tokens = tokensArray?.let { arr -> (0 until arr.size()).mapNotNull { arr.getString(it) } } ?: emptyList()
++        if (tokens.isEmpty()) continue
++        val joiner = if (clip.hasKey("labelJoiner")) clip.getString("labelJoiner") ?: ", " else ", "
++        val position = if (clip.hasKey("labelPosition")) clip.getString("labelPosition") ?: "left" else "left"
++        val style = if (clip.hasKey("labelStyle")) clip.getString("labelStyle") ?: "outline" else "outline"
++        val w = clip.getInt("w")
++        val h = clip.getInt("h")
++        val bitmap = renderLabelBitmap(tokens, joiner, w, h, position, style)
++        val labelPath = saveLabelBitmap(bitmap)
++        labelPngPaths.add(labelPath)
++        val labelInputIndex = nextInputIndex
++        nextInputIndex += 1
++        // -loop 1 tells ffmpeg to treat this still image as an infinitely
++        // repeating single frame — the standard, documented way to combine
++        // a static image with video via overlay. Without it, how long an
++        // image "lasts" as an input is version/build-dependent behavior,
++        // and this FFmpegKit build is a different, older ffmpeg version
++        // than what this was tested against directly — worth being
++        // explicit here rather than relying on an unspecified default.
++        inputArgs.addAll(listOf("-loop", "1", "-i", labelPath))
++        // shortest=1 is the necessary companion to -loop 1 above — without
++        // it, confirmed directly (against real ffmpeg) that this combination
++        // can hang indefinitely rather than terminate once the (finite)
++        // video input ends, since the looped image on its own has no
++        // natural end for ffmpeg to synchronize against. With it, the
++        // overlay correctly ends exactly when the shorter (video) input does.
++        filterParts.add("[v$i][$labelInputIndex:v]overlay=0:0:shortest=1[v${i}l]")
++        finalVideoLabels[i] = "v${i}l"
++      }
++
++      if (isSerial) {
++        // Confirmed directly (against real ffmpeg, in the bookmarklet
++        // version, including a mid-sequence trimmed clip) that concat plays
++        // each input fully, in order, for its own natural/trimmed length —
++        // no explicit background or positions needed, unlike the grid's
++        // overlay chain, since nothing ever shares the frame with anything else.
++        val concatInputs = (0 until n).joinToString("") { "[${finalVideoLabels[it]}]" }
++        filterParts.add("${concatInputs}concat=n=$n:v=1:a=0[outv]")
++      } else {
++        var prevLabel = "bg"
++        for (i in 0 until n) {
++          val clip = clipMaps[i]!!
++          val x = clip.getInt("x")
++          val y = clip.getInt("y")
++          val outLabel = if (i == n - 1) "outv" else "t$i"
++          filterParts.add("[$prevLabel][${finalVideoLabels[i]}]overlay=$x:$y[$outLabel]")
++          prevLabel = outLabel
++        }
 +      }
 +
 +      val filterComplex = filterParts.joinToString(";")
++      Log.d(TAG, "exportGrid main command: n=$n isSerial=$isSerial inputArgs=${inputArgs.joinToString(" ")} filterComplex=$filterComplex")
 +
 +      // Fixed, reasonable bitrate rather than probing every source clip's
 +      // bitrate like merge() does — the output is a scaled-down composite
@@ -151,10 +349,20 @@ index cc9ba6a..052a106 100644
 +      val buildCommand: (VideoTrimmerUtil.EncoderConfig) -> Array<String> = { config ->
 +        val cmds = mutableListOf<String>()
 +        cmds.addAll(inputArgs)
-+        cmds.addAll(listOf(
-+          "-filter_complex", filterComplex,
-+          "-map", "[outv]", "-an", "-t", targetDurationSec.toString(),
-+        ))
++        cmds.add("-filter_complex")
++        cmds.add(filterComplex)
++        cmds.add("-map")
++        cmds.add("[outv]")
++        cmds.add("-an")
++        // Only grid mode needs an explicit cap — its duration is "however
++        // long until every looping/frozen clip has filled the longest one",
++        // which needs the -t to actually stop there. Serial mode's own
++        // total length already falls out naturally from concatenating each
++        // clip's real length once.
++        if (!isSerial) {
++          cmds.add("-t")
++          cmds.add(targetDurationSec.toString())
++        }
 +        cmds.addAll(config.args)
 +        cmds.addAll(listOf("-y", outputFile))
 +        cmds.toTypedArray()
@@ -173,18 +381,28 @@ index cc9ba6a..052a106 100644
 +          retriever.release()
 +        } catch (_: Exception) {
 +        }
-+        // Best-effort cleanup of the intermediate trim-extraction files —
-+        // frees cache space; a failure here doesn't affect the result
-+        // already written to outputFile.
++        // Best-effort cleanup of the intermediate trim-extraction and label
++        // bitmap files — frees cache space; a failure here doesn't affect
++        // the result already written to outputFile.
 +        for (f in extractedFiles) { try { File(f).delete() } catch (_: Exception) {} }
++        for (f in labelPngPaths) { try { File(f).delete() } catch (_: Exception) {} }
 +        val result = Arguments.createMap()
 +        result.putString("outputPath", outputFile)
 +        result.putDouble("duration", duration)
++        // Temporary diagnostics — the export "succeeds" (no error, no
++        // logcat needed) but produces wrong content, so the only way to see
++        // the ACTUAL command that ran is to hand it back through the result
++        // itself, where it reaches the same Metro console already showing
++        // the [gridExport] input logs. Safe to remove once this is solved.
++        result.putInt("debugLabelCount", labelPngPaths.size)
++        result.putString("debugInputArgs", inputArgs.joinToString(" "))
++        result.putString("debugFilterComplex", filterComplex)
 +        promise.resolve(result)
 +      },
 +      onCancel = { promise.reject(Exception("Grid export was cancelled")) },
 +      onError = { _, _, session ->
 +        for (f in extractedFiles) { try { File(f).delete() } catch (_: Exception) {} }
++        for (f in labelPngPaths) { try { File(f).delete() } catch (_: Exception) {} }
 +        val returnCode = session?.returnCode
 +        val logs = session?.allLogsAsString ?: ""
 +        promise.reject(Exception("Grid export failed: rc $returnCode\n$logs"))
@@ -291,10 +509,10 @@ index 66de340..0d89d19 100644
   * Mix (or replace) an external audio track, such as background music or a
   * voice-over, into a video (headless, no UI). The video stream is copied
 diff --git a/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts b/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts
-index 9a61328..471efa0 100644
+index 9a61328..7f58cb2 100644
 --- a/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts
 +++ b/node_modules/react-native-video-trim/lib/typescript/src/NativeVideoTrim.d.ts
-@@ -286,6 +286,55 @@ export interface GifResult {
+@@ -286,6 +286,80 @@ export interface GifResult {
      /** Absolute path to the generated GIF file. */
      outputPath: string;
  }
@@ -316,6 +534,25 @@ index 9a61328..471efa0 100644
 +     */
 +    trimStartSec?: number;
 +    trimDurationSec?: number;
++    /**
++     * When set, this clip freezes on its own last frame for this many extra
++     * seconds instead of looping — set only when needsLoop is true and the
++     * caller chose "Stop" over "Replay".
++     */
++    stopExtendSec?: number;
++    /**
++     * Tokens to wrap into this clip's label (rendered as a small transparent
++     * PNG via Android's own TextPaint/Canvas, then composited with an
++     * ordinary `overlay` — no drawtext/libfreetype dependency). Each token
++     * is kept atomic and never split mid-token. Omit for no label.
++     */
++    labelTokens?: string[];
++    /** How labelTokens are joined when they fit on the same line. Default ", ". */
++    labelJoiner?: string;
++    /** Which bottom corner the label sits in. Default 'left'. */
++    labelPosition?: 'left' | 'right';
++    /** 'outline' (default) or 'box'. */
++    labelStyle?: 'outline' | 'box';
 +    /** Left edge of this clip's box, in pixels, within the output canvas. */
 +    x: number;
 +    /** Top edge of this clip's box, in pixels, within the output canvas. */
@@ -333,10 +570,12 @@ index 9a61328..471efa0 100644
 +    canvasWidth: number;
 +    /** Output canvas height in pixels. */
 +    canvasHeight: number;
-+    /** Output duration in milliseconds. */
++    /** Output duration in milliseconds. Ignored in 'serial' format. */
 +    targetDurationMs: number;
 +    /** Output file extension. Default `"mp4"`. */
 +    outputExt: string;
++    /** 'grid' (default) or 'serial' (concatenate clips one after another instead of compositing them together). */
++    format?: 'grid' | 'serial';
 +}
 +/**
 + * Result returned by {@link Spec.exportGrid}.
@@ -346,11 +585,15 @@ index 9a61328..471efa0 100644
 +    outputPath: string;
 +    /** Duration of the output video in milliseconds. */
 +    duration: number;
++    /** Temporary diagnostics. */
++    debugLabelCount?: number;
++    debugInputArgs?: string;
++    debugFilterComplex?: string;
 +}
  /**
   * Options for merging multiple media files into one.
   */
-@@ -388,6 +437,7 @@ export interface Spec extends TurboModule {
+@@ -388,6 +462,7 @@ export interface Spec extends TurboModule {
      toGif(url: string, options: GifOptions): Promise<GifResult>;
      /** Merge multiple media files into a single file. Headless only, no editor UI. */
      merge(urls: ReadonlyArray<string>, options: MergeOptions): Promise<MergeResult>;
@@ -384,10 +627,10 @@ index ede1116..3bf3bc0 100644
   * Mix (or replace) an external audio track, such as background music or a
   * voice-over, into a video (headless, no UI). The video stream is copied
 diff --git a/node_modules/react-native-video-trim/src/NativeVideoTrim.ts b/node_modules/react-native-video-trim/src/NativeVideoTrim.ts
-index 23fb693..5b5b2db 100644
+index 23fb693..c6004bd 100644
 --- a/node_modules/react-native-video-trim/src/NativeVideoTrim.ts
 +++ b/node_modules/react-native-video-trim/src/NativeVideoTrim.ts
-@@ -319,6 +319,61 @@ export interface MergeResult {
+@@ -319,6 +319,93 @@ export interface MergeResult {
    duration: number;
  }
  
@@ -412,6 +655,30 @@ index 23fb693..5b5b2db 100644
 +   */
 +  trimStartSec?: number;
 +  trimDurationSec?: number;
++  /**
++   * When set, this clip is shorter than the target duration and should
++   * freeze on its own last frame for this many extra seconds instead of
++   * looping — set only when needsLoop is true and the caller chose "Stop"
++   * over "Replay". Leave unset (with needsLoop true) for the normal loop
++   * behavior.
++   */
++  stopExtendSec?: number;
++  /**
++   * Tokens to wrap into this clip's label (rendered as a small transparent
++   * PNG on the Android side via TextPaint/Canvas, then composited with an
++   * ordinary `overlay` — no drawtext/libfreetype dependency, so this works
++   * on the same FFmpegKit "min" build already used for everything else).
++   * Each token is kept atomic and never split mid-token: pass whole animator
++   * names (joiner ", ") or whole words of custom freeform text (joiner " ").
++   * Omit (or pass an empty array) for a clip with no label.
++   */
++  labelTokens?: string[];
++  /** How labelTokens are joined when they fit on the same line. Default ", ". */
++  labelJoiner?: string;
++  /** Which bottom corner the label sits in. Default 'left'. */
++  labelPosition?: 'left' | 'right';
++  /** 'outline' (default) draws a black stroke behind white text; 'box' draws a translucent black rectangle behind it instead. */
++  labelStyle?: 'outline' | 'box';
 +  /** Left edge of this clip's box, in pixels, within the output canvas. */
 +  x: number;
 +  /** Top edge of this clip's box, in pixels, within the output canvas. */
@@ -430,10 +697,12 @@ index 23fb693..5b5b2db 100644
 +  canvasWidth: number;
 +  /** Output canvas height in pixels — the maximum bottom edge across all clip boxes. */
 +  canvasHeight: number;
-+  /** Output duration in milliseconds — the longest clip's own duration; shorter clips loop (see {@link GridClipInput.needsLoop}) to fill it. */
++  /** Output duration in milliseconds — the longest clip's own duration; shorter clips loop (see {@link GridClipInput.needsLoop}) to fill it. Ignored in 'serial' format, where the total length is just the sum of every clip's own length. */
 +  targetDurationMs: number;
 +  /** Output file extension. Default `"mp4"`. */
 +  outputExt: string;
++  /** 'grid' (default) composites every clip into one shared frame at once; 'serial' concatenates them one after another in time instead. */
++  format?: 'grid' | 'serial';
 +}
 +
 +/**
@@ -444,12 +713,18 @@ index 23fb693..5b5b2db 100644
 +  outputPath: string;
 +  /** Duration of the output video in milliseconds. */
 +  duration: number;
++  /** Temporary diagnostics — number of clips a label bitmap was generated for. */
++  debugLabelCount?: number;
++  /** Temporary diagnostics — the exact -i/-loop/etc. arguments passed to ffmpeg. */
++  debugInputArgs?: string;
++  /** Temporary diagnostics — the exact -filter_complex string passed to ffmpeg. */
++  debugFilterComplex?: string;
 +}
 +
  /**
   * Options for mixing an external audio track (background music / voice-over)
   * into a video.
-@@ -419,6 +474,16 @@ export interface Spec extends TurboModule {
+@@ -419,6 +506,16 @@ export interface Spec extends TurboModule {
      urls: ReadonlyArray<string>,
      options: MergeOptions
    ): Promise<MergeResult>;

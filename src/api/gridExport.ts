@@ -1,13 +1,34 @@
 import { File, Paths } from 'expo-file-system';
 import { isValidFile, exportGrid as nativeExportGrid } from 'react-native-video-trim';
-import { Post, isVideoFile } from './sakugabooru';
+import { Post, isVideoFile, getTagTypeMap } from './sakugabooru';
 
 export type GridOrientation = 'landscape' | 'portrait';
 export type GridMode = 'center' | 'stretch';
+export type GridFormat = 'grid' | 'serial';
+export type LoopMode = 'replay' | 'stop';
+export type LabelMode = 'off' | 'left' | 'right';
+export type LabelStyle = 'outline' | 'box';
+
+// Capitalizes each word of an auto-detected animator name (tag names are
+// plain lowercase with underscores, e.g. "yutaka_nakamura" — there's no
+// real capitalization in the source to preserve). Never applied to a
+// person's own custom label text, which is used verbatim — that's
+// hand-authored, and forcing a casing convention on it would be
+// presumptuous, unlike a raw tag name that never had any intentional
+// casing to begin with. Ported 1:1 from the bookmarklet.
+export function titleCase(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export const MAX_GRID_CLIPS = 9;
 const GRID_CELL_W = 480;
 const GRID_CELL_H = 270;
+// Serial export shows one clip at a time, not a grid of small cells, so it
+// can afford a noticeably bigger single frame for the same encode budget —
+// double the grid cell's own linear size, still 16:9. Matches the
+// bookmarklet's SERIAL_LONG/SERIAL_SHORT exactly.
+const SERIAL_LONG = 960;
+const SERIAL_SHORT = 540;
 
 interface GridLayout {
   cols: number;
@@ -84,7 +105,10 @@ export interface GridPreview {
   layoutLabel: string; // e.g. "3 × 2 grid" or "featured clip above a 2 × 2 grid"
 }
 
-export function previewGridLayout(clipCount: number, orientation: GridOrientation, mode: GridMode): GridPreview {
+export function previewGridLayout(clipCount: number, orientation: GridOrientation, mode: GridMode, format: GridFormat = 'grid'): GridPreview {
+  if (format === 'serial') {
+    return { clipCount, layoutLabel: 'played back-to-back, one after another' };
+  }
   if (mode === 'stretch' && clipCount >= 3) {
     const restLayout = computeGridLayout(clipCount - 1, orientation);
     return { clipCount, layoutLabel: `featured clip above a ${restLayout.cols} × ${restLayout.rows} grid` };
@@ -158,13 +182,31 @@ export async function exportPoolAsGrid(
   orientation: GridOrientation,
   mode: GridMode,
   trims: Record<number, TrimRange> = {},
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  format: GridFormat = 'grid',
+  loopMode: LoopMode = 'replay',
+  labelMode: LabelMode = 'off',
+  labelStyle: LabelStyle = 'outline',
+  labelOverrides: Record<number, string> = {}
 ): Promise<GridExportResult> {
   const startedAt = Date.now();
   const clips = posts.filter((p) => isVideoFile(p.file_url)).slice(0, MAX_GRID_CLIPS);
   if (clips.length < 2) throw new Error('need at least 2 video clips in this pool');
 
-  const positions = computeCellPositions(clips.length, orientation, mode);
+  // Only fetched when actually needed — every other clip in this file skips
+  // this entirely if labels are off.
+  const tagTypes = labelMode !== 'off' ? await getTagTypeMap() : {};
+
+  // Serial mode has no grid to subdivide — every clip gets the same single,
+  // larger frame instead of a computed cell position within a shared canvas.
+  let positions: CellPosition[];
+  if (format === 'serial') {
+    const w = orientation === 'portrait' ? SERIAL_SHORT : SERIAL_LONG;
+    const h = orientation === 'portrait' ? SERIAL_LONG : SERIAL_SHORT;
+    positions = clips.map(() => ({ x: 0, y: 0, w, h }));
+  } else {
+    positions = computeCellPositions(clips.length, orientation, mode);
+  }
 
   // Downloaded in parallel — unlike the bookmarklet's ffmpeg.wasm version,
   // there's no shared memory-constrained heap forcing these one-at-a-time
@@ -192,8 +234,11 @@ export async function exportPoolAsGrid(
   const naturalDurationsMs = downloadResults.map((r) => r.durationMs);
 
   // Effective duration is the trimmed range's length when a clip has one,
-  // not the full clip's natural length — this is what actually determines
-  // whether it needs to loop and feeds the target duration calculation.
+  // not the full clip's natural length. For grid mode this feeds the
+  // target-duration/looping decision; for serial mode there's no target to
+  // loop toward — each clip just plays once, for however long its own
+  // (possibly trimmed) length is — but the number is still needed there
+  // too, just for the trim-extraction step, not for any duration decision.
   const effectiveDurationsMs = clips.map((post, i) => {
     const trim = trims[post.id];
     if (!trim) return naturalDurationsMs[i];
@@ -209,9 +254,12 @@ export async function exportPoolAsGrid(
   const gridClips = localPaths.map((path, i) => {
     const post = clips[i];
     const trim = trims[post.id];
+    // Serial mode never loops — every clip in a sequence just plays through
+    // once for its own length, so needsLoop stays false there regardless.
+    const needsLoop = format === 'grid' && effectiveDurationsMs[i] > 0 && effectiveDurationsMs[i] < targetDurationMs - 100;
     const clip: any = {
       path,
-      needsLoop: effectiveDurationsMs[i] > 0 && effectiveDurationsMs[i] < targetDurationMs - 100,
+      needsLoop,
       x: positions[i].x,
       y: positions[i].y,
       w: positions[i].w,
@@ -220,6 +268,42 @@ export async function exportPoolAsGrid(
     if (trim) {
       clip.trimStartSec = trim.start;
       clip.trimDurationSec = trim.end - trim.start;
+    }
+    if (needsLoop && loopMode === 'stop') {
+      clip.stopExtendSec = (targetDurationMs - effectiveDurationsMs[i]) / 1000;
+    }
+    if (labelMode !== 'off') {
+      const override = labelOverrides[post.id];
+      if (override && override.trim()) {
+        // A custom label replaces the auto-detected staff names entirely
+        // for this clip — wrapped at its own natural word breaks like
+        // ordinary text on the native side, not treated as a single atomic
+        // name the way a real animator name is.
+        clip.labelTokens = override.trim().split(/\s+/).filter(Boolean);
+        clip.labelJoiner = ' ';
+      } else {
+        // Only this clip's own animator tags — not the show, not other
+        // general tags — since the point is identifying who's credited on
+        // THIS specific cut, matching the community request this came from.
+        const animatorNames = (post.tags || '')
+          .split(/\s+/)
+          .filter((t) => t && tagTypes[t] === 1)
+          .map((t) => titleCase(t.replace(/_/g, ' ')));
+        // Only beyond 9 credited animators (rare) does the list itself get
+        // truncated with a "+N more" — short lists never pay this cost.
+        if (animatorNames.length > 9) {
+          const extra = animatorNames.length - 9;
+          clip.labelTokens = [...animatorNames.slice(0, 9), `+${extra} more`];
+          clip.labelJoiner = ', ';
+        } else if (animatorNames.length) {
+          clip.labelTokens = animatorNames;
+          clip.labelJoiner = ', ';
+        }
+      }
+      if (clip.labelTokens?.length) {
+        clip.labelPosition = labelMode; // 'left' | 'right'
+        clip.labelStyle = labelStyle;
+      }
     }
     return clip;
   });
@@ -231,7 +315,26 @@ export async function exportPoolAsGrid(
     if (pos.y + pos.h > canvasHeight) canvasHeight = pos.y + pos.h;
   }
 
-  onStatus?.('compositing grid (this can take a while)…');
+  // Visible directly in the Metro/`expo start` terminal — no adb/logcat
+  // needed. Prints exactly what's about to be sent to the native side, so a
+  // "no text" or "wrong clip count" report can be checked against real data
+  // instead of guessed at blind: does every clip actually have labelTokens
+  // when labels are on, does the clip count/order match what was picked,
+  // are x/y/w/h sane for the chosen format.
+  console.log(
+    `[gridExport] format=${format} loopMode=${loopMode} labelMode=${labelMode} labelStyle=${labelStyle} ` +
+      `canvas=${canvasWidth}x${canvasHeight} targetDurationMs=${targetDurationMs}`
+  );
+  gridClips.forEach((c, i) => {
+    console.log(
+      `[gridExport] clip[${i}] path=${c.path} x=${c.x} y=${c.y} w=${c.w} h=${c.h} needsLoop=${c.needsLoop} ` +
+        `stopExtendSec=${c.stopExtendSec ?? '-'} trim=${c.trimStartSec != null ? `${c.trimStartSec}+${c.trimDurationSec}` : '-'} ` +
+        `labelTokens=${c.labelTokens ? JSON.stringify(c.labelTokens) : '-'} labelJoiner=${c.labelJoiner ?? '-'} ` +
+        `labelPosition=${c.labelPosition ?? '-'} labelStyle=${c.labelStyle ?? '-'}`
+    );
+  });
+
+  onStatus?.(format === 'serial' ? 'joining clips (this can take a while)…' : 'compositing grid (this can take a while)…');
   // If exportGrid genuinely isn't present on the native module — most
   // likely because the installed build predates the react-native-video-trim
   // patch, or a stale build wasn't rebuilt after it was added — fail with a
@@ -247,7 +350,15 @@ export async function exportPoolAsGrid(
     canvasHeight,
     targetDurationMs,
     outputExt: 'mp4',
+    format,
   });
+
+  // Same temporary diagnostics as the input log above, just for what
+  // actually ran natively — the export "succeeds" with no error, so this
+  // is the only way to see the real command without adb/logcat.
+  console.log(`[gridExport] native result: debugLabelCount=${result.debugLabelCount}`);
+  console.log(`[gridExport] native inputArgs: ${result.debugInputArgs}`);
+  console.log(`[gridExport] native filterComplex: ${result.debugFilterComplex}`);
 
   // Best-effort cleanup of the downloaded inputs — the composited output
   // stays (that's the actual result being returned).

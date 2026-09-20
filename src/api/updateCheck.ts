@@ -3,7 +3,7 @@
 // hand with app.json's "version" field and the actual GitHub release tag
 // each time a new one is published. A small manual step, but avoids adding
 // a whole new native dependency for something this simple.
-export const APP_VERSION = '1.8.1';
+export const APP_VERSION = '1.10.7';
 
 const REPO = 'Punyesh/sakugaEnhancerApp';
 

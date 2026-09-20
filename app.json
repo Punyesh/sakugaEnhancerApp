@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sakuga Enhancer",
     "slug": "sakuga-app",
-    "version": "1.8.1",
+    "version": "1.10.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
